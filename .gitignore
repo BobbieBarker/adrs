@@ -1,0 +1,6 @@
+.DS_Store
+*.swp
+*.swo
+.elixir_ls/
+_build/
+deps/

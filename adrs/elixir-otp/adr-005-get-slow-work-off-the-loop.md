@@ -1,0 +1,112 @@
+---
+type: adr
+id: 5
+title: Get Slow Work Off the Processing Loop
+status: accepted
+date: 2026-04-22
+tags: [elixir, otp, genserver, handle_continue, task, async]
+description: Three OTP mechanisms for moving slow work out of a GenServer callback. handle_continue for post-init deferred work, Task.Supervisor for fire-and-forget, GenServer.reply for async responses.
+---
+
+# ADR-005: Get Slow Work Off the Processing Loop
+
+## Context
+
+ADR-004 establishes that callbacks must not block the processing loop. This ADR covers the three mechanisms OTP provides for doing the slow work outside the callback body.
+
+- `handle_continue/2` for deferred work that must run before the first client message.
+- `Task.Supervisor` for fire-and-forget work whose result is not needed in line.
+- `GenServer.reply/2` for work that must return to the original caller but cannot be done in-line.
+
+Which to reach for depends on where the slow work sits relative to the callback lifecycle.
+
+## Decision
+
+### Rule 1: Use handle_continue for post-init work
+
+If expensive setup work logically belongs in init/1, move it to handle_continue/2 so init/1 returns quickly.
+
+**Correct:**
+
+```elixir
+def init(opts) do
+  {:ok, Impl.initial_state(opts), {:continue, :load_catalog}}
+end
+
+def handle_continue(:load_catalog, state) do
+  {:ok, catalog} = load_catalog_from_disk(state.config.catalog_path)
+  {:noreply, %{state | catalog: catalog}}
+end
+```
+
+**Wrong:**
+
+```elixir
+def init(opts) do
+  state = Impl.initial_state(opts)
+  {:ok, catalog} = load_catalog_from_disk(state.config.catalog_path)
+  {:ok, %{state | catalog: catalog}}
+end
+```
+
+**Why:** `init/1` blocks the supervisor's `start_link` call until it returns. Every dependent child waits. `handle_continue/2` lets `init/1` return immediately; the deferred work runs as part of entering the loop, before any other message is processed. The supervisor unblocks, and siblings start.
+
+### Rule 2: Use Task.Supervisor for fire-and-forget work
+
+For work the server kicks off but does not need to synchronize with, use `Task.Supervisor.start_child/2`. Use `async_nolink/3` when a result is needed later via `handle_info`.
+
+**Correct:**
+
+```elixir
+def handle_cast({:emit_audit_event, event}, state) do
+  Task.Supervisor.start_child(MyApp.TaskSupervisor, fn ->
+    AuditLog.send(event)
+  end)
+  {:noreply, state}
+end
+```
+
+**Wrong:**
+
+```elixir
+def handle_cast({:emit_audit_event, event}, state) do
+  spawn(fn -> AuditLog.send(event) end)
+  {:noreply, state}
+end
+```
+
+**Why:** `spawn/1` gives no supervision, no structured error reporting, and no way to bound concurrency. A crash in the child disappears silently. `spawn_link/1` is worse: a crash in the child takes the server down with it. `Task.Supervisor.start_child/2` supervises the task, reports crashes through the standard error logger, and does not link the failure to the server. `Task.Supervisor.async_nolink/3` is the variant to use when the caller needs the task's result: the task's return value arrives as a `handle_info({ref, result}, state)` message, and a separate `:DOWN` message follows when the task exits.
+
+### Rule 3: Use GenServer.reply for async responses
+
+If the caller needs the result but the work cannot run in-line, return `{:noreply, state}` from `handle_call`, kick the work to a task, and call `GenServer.reply/2` from the task when the result is ready.
+
+**Correct:**
+
+```elixir
+def handle_call({:reconcile, account_id}, from, state) do
+  Task.Supervisor.start_child(MyApp.TaskSupervisor, fn ->
+    result = do_reconciliation(account_id)
+    GenServer.reply(from, result)
+  end)
+  {:noreply, state}
+end
+```
+
+**Wrong:**
+
+```elixir
+def handle_call({:reconcile, account_id}, _from, state) do
+  result = do_reconciliation(account_id)
+  {:reply, result, state}
+end
+```
+
+**Why:** `GenServer.reply/2` accepts the `from` tuple and can be called from any process. The original caller is still blocked on its `call` and does not care which process answers. Returning `{:noreply, state}` frees the server's loop to handle the next message while the work continues. If cancellation matters, stash the task reference in state and monitor it so the server can clean up when the caller exits.
+
+## Consequences
+
+- Callbacks stay bounded regardless of how slow the underlying work is.
+- Expensive init runs without blocking the supervisor tree.
+- Fire-and-forget work is supervised, not lost.
+- The server owns sequencing; the task owns the slow thing. Neither leaks into the other.

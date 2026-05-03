@@ -1,0 +1,76 @@
+---
+type: adr
+id: 4
+title: Never Block the GenServer Processing Loop
+status: accepted
+date: 2026-04-22
+tags: [elixir, otp, genserver, performance, callbacks]
+description: GenServer callbacks handle one message at a time. Blocking I/O or unbounded computation in a callback stalls every other caller. Raising the call timeout papers over the problem instead of fixing it.
+---
+
+# ADR-004: Never Block the GenServer Processing Loop
+
+## Context
+
+A GenServer handles one message at a time. Every callback body runs to completion before the next message is pulled from the mailbox. Blocking operations inside a callback (HTTP calls, synchronous queries to a slow database, file reads of unknown size, any computation whose tail can be much longer than its median) stall every other caller.
+
+The default `GenServer.call/2` timeout is 5000 ms. Raising the timeout or passing `:infinity` does not make the server faster. It makes failures louder and harder to bound. A stuck upstream becomes a stuck caller.
+
+When this rule is violated at scale, the consequences cascade. The mailbox of a slow server grows with every queued call. Messages to that process default to living on the process heap, so per-process GC scans them and pauses scale with mailbox size. `process_info` calls against long mailboxes have known degradations (OTP issues #5481 and #6494), so observability slows exactly when an operator needs it most.
+
+Before memory exhaustion, the choke point is the bloated process itself. Selective receive against a long mailbox is, per the Erlang Efficiency Guide, "very expensive for processes with long message queues." The process consumes its reductions by walking its own mailbox instead of doing useful work, and is scheduled out before it can make meaningful progress. Aggregate throughput across the node scales proportionally: the system stays nominally alive while latency rises and useful work per CPU-second drops. This is often a worse outcome than an outright crash, because supervisors cannot restart what is still running. The node holds its connections, refuses new work, and degrades silently until something external intervenes.
+
+If growth continues, the BEAM eventually hits a memory ceiling (host OOM-kill or allocator failure), and the node dies. There is no graceful shutdown from a memory failure, no `terminate/2`, no supervisor restart of the dead process. A single slow callback in production is bounded only by the host's memory.
+
+## Decision
+
+### Rule 1: No blocking I/O or unbounded computation in callbacks
+
+Callbacks return quickly. "Quickly" means bounded and predictable, not "fast in the happy case."
+
+**Correct:**
+
+```elixir
+def handle_call({:reserve, sku, qty}, from, state) do
+  Task.Supervisor.start_child(MyApp.TaskSupervisor, fn ->
+    result = external_reserve(sku, qty)
+    GenServer.reply(from, result)
+  end)
+  {:noreply, state}
+end
+```
+
+**Wrong:**
+
+```elixir
+def handle_call({:reserve, sku, qty}, _from, state) do
+  {:ok, response} = HTTPoison.get("https://inventory.example.com/reserve/#{sku}/#{qty}")
+  {:reply, parse_response(response), state}
+end
+```
+
+**Why:** The wrong version stalls every message in the mailbox for the duration of the HTTP request. If the upstream service has a 30-second tail, every caller of the server sees a 30-second tail, and the 5000 ms call timeout starts raising exits across the codebase. The correct version removes the slow work from the callback (the mechanisms are covered in ADR-005), keeps the loop free, and still returns the answer to the original caller.
+
+### Rule 2: Do not raise the call timeout to paper over slow callbacks
+
+If callers are timing out on a GenServer, the fix is to speed up the callback, not to increase the caller's patience.
+
+**Correct:**
+
+```elixir
+def fetch_price(sku), do: GenServer.call(MyApp.Pricing.Server, {:fetch, sku})
+```
+
+**Wrong:**
+
+```elixir
+def fetch_price(sku), do: GenServer.call(MyApp.Pricing.Server, {:fetch, sku}, 60_000)
+```
+
+**Why:** Raising the timeout hides the underlying problem (a slow callback) and extends the blast radius of a stall. `:infinity` is worse because a stuck upstream becomes a permanently stuck caller. If 5000 ms is routinely not enough, the callback is doing work it should not be doing inline.
+
+## Consequences
+
+- Callbacks stay bounded. Mailbox depth is driven by request rate, not by tail latency inside the server.
+- Timeouts at call sites stay at the default. When they do fire, they point to a real problem rather than a config dial.
+- Slow work moves to tasks, continues, or asynchronous reply patterns. See ADR-005.

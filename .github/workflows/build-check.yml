@@ -1,0 +1,45 @@
+name: build-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  dist-drift:
+    name: dist/ is in sync with adrs/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Cache Mix.install deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.mix
+          key: mix-install-${{ hashFiles('tools/build_dist.exs') }}
+
+      - name: Regenerate dist/
+        run: elixir tools/build_dist.exs
+
+      - name: Fail if dist/ has drifted from adrs/
+        run: |
+          if ! git diff --exit-code dist/; then
+            echo ""
+            echo "::error::dist/ is out of sync with adrs/. Run 'elixir tools/build_dist.exs' locally and commit the result."
+            exit 1
+          fi
+
+      - name: Validate adrs.jsonl is well-formed JSON per line
+        run: |
+          for f in dist/*/adrs.jsonl; do
+            echo "Checking $f"
+            while IFS= read -r line; do
+              echo "$line" | python3 -c "import sys,json; json.loads(sys.stdin.read())" \
+                || { echo "::error::Malformed JSON in $f"; exit 1; }
+            done < "$f"
+          done

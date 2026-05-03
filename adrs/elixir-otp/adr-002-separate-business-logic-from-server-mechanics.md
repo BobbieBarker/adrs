@@ -1,0 +1,248 @@
+---
+type: adr
+id: 2
+title: Separate GenServer Business Logic From Server Mechanics
+status: accepted
+date: 2026-04-17
+tags: [elixir, otp, genserver, architecture, testing]
+description: "Split each GenServer into three modules across three files. The API module is the domain boundary, callers depend only on it. The Server module holds GenServer callbacks. The Impl module holds functions over explicit state with no GenServer awareness."
+---
+
+# ADR-002: Separate GenServer Business Logic From Server Mechanics
+
+## Context
+
+GenServers are frequently written as a single module that combines the public API, the GenServer callbacks, and the business logic. This couples three concerns that change independently:
+
+- The public API (what callers invoke)
+- The server mechanics (message dispatch, callback signatures, return tuples)
+- The business logic (state transformations, rules, computation)
+
+When these concerns are entangled, business logic can only be tested by starting a process; every change to server mechanics risks breaking logic, and moving logic from a server to a library (or the reverse) requires rewriting everything. Callers are tightly coupled to the implementation choice: any change to that choice ripples out to every call site.
+
+The fix is a three-module split across three files. The API module is the boundary of the domain, the only module callers depend on. The Server module contains only GenServer callbacks. The Impl module contains functions that operate on explicit state and have no GenServer awareness. The point is loose coupling: callers depend on a stable interface, and the decision to implement the domain as a GenServer (or to replace it with something else later) is contained within the boundary and does not propagate to call sites.
+
+## Decision
+
+Split every GenServer into three modules.
+
+### Rule 1: Three modules per GenServer, each in its own file
+
+The file layout mirrors the module path. The domain lives in a directory; the API module sits next to that directory as the boundary callers depend on.
+
+```
+lib/my_app/
+├── inventory.ex            # MyApp.Inventory             (API, boundary of the domain)
+└── inventory/
+    ├── server.ex           # MyApp.Inventory.Server      (GenServer callbacks)
+    └── impl.ex             # MyApp.Inventory.Impl        (functions over explicit state, no GenServer awareness)
+```
+
+- **API module** (`MyApp.Inventory`, in `lib/my_app/inventory.ex`): the public entry point callers invoke. A thin boundary that hides whether the work is done by a GenServer, an Agent, plain functions, or something else.
+- **Server module** (`MyApp.Inventory.Server`, in `lib/my_app/inventory/server.ex`): GenServer callbacks only. No business logic.
+- **Impl module** (`MyApp.Inventory.Impl`, in `lib/my_app/inventory/impl.ex`): functions that take explicit state and return `{result, new_state}` (or equivalent). No GenServer awareness.
+
+**Correct:**
+
+```elixir
+# lib/my_app/inventory.ex
+defmodule MyApp.Inventory do
+  alias MyApp.Inventory.Server
+
+  def start_link(opts \\ %{}), do: Server.start_link(opts)
+
+  def reserve(sku, qty, name \\ Server),
+    do: GenServer.call(name, {:reserve, sku, qty})
+end
+```
+
+```elixir
+# lib/my_app/inventory/server.ex
+defmodule MyApp.Inventory.Server do
+  use GenServer
+  alias MyApp.Inventory.Impl
+
+  def start_link(opts \\ %{}) do
+    opts = Map.put_new(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: opts.name)
+  end
+
+  def init(opts), do: {:ok, Impl.initial_state(opts)}
+
+  def handle_call({:reserve, sku, qty}, _from, state) do
+    {result, new_state} = Impl.reserve(state, sku, qty)
+    {:reply, result, new_state}
+  end
+end
+```
+
+```elixir
+# lib/my_app/inventory/impl.ex
+defmodule MyApp.Inventory.Impl do
+  def initial_state(opts),
+    do: %{stock: Map.get(opts, :stock, %{}), reservations: %{}}
+
+  def reserve(state, sku, qty) do
+    case Map.get(state.stock, sku) do
+      n when is_integer(n) and n >= qty ->
+        new_state = %{
+          state
+          | stock: Map.update!(state.stock, sku, &(&1 - qty)),
+            reservations: Map.update(state.reservations, sku, qty, &(&1 + qty))
+        }
+        {:ok, new_state}
+
+      _ ->
+        {{:error, :insufficient_stock}, state}
+    end
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory.ex - public API, callbacks, and logic all jammed into one file
+defmodule MyApp.Inventory do
+  use GenServer
+
+  def start_link(opts),
+    do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def reserve(sku, qty), do: GenServer.call(__MODULE__, {:reserve, sku, qty})
+
+  def init(opts), do: {:ok, %{stock: Map.get(opts, :stock, %{}), reservations: %{}}}
+
+  def handle_call({:reserve, sku, qty}, _from, state) do
+    case Map.get(state.stock, sku) do
+      n when is_integer(n) and n >= qty ->
+        new_state = %{
+          state
+          | stock: Map.update!(state.stock, sku, &(&1 - qty)),
+            reservations: Map.update(state.reservations, sku, qty, &(&1 + qty))
+        }
+        {:reply, :ok, new_state}
+
+      _ ->
+        {:reply, {:error, :insufficient_stock}, state}
+    end
+  end
+end
+```
+
+**Why:** The split is structural, not just lexical. Three modules in three files means callers `alias MyApp.Inventory` and depend on the boundary only; they never see `Server` or `Impl`. `Impl` functions are testable with explicit state and no process. Server callbacks become mechanical enough that changes to them rarely affect logic. The API module absorbs the choice of whether a GenServer exists at all: if the domain evolves into something other than a GenServer (a plain library, an Agent, a Task pool, a process per entity behind a Registry), `lib/my_app/inventory.ex` is the only file callers indirectly depend on, and the API signatures stay identical. In the single-module, single-file version, every caller imports the same module that does the work, every logic test starts a process, and any restructuring of state or dispatch touches logic.
+
+### Rule 2: Impl has no GenServer awareness
+
+`Impl` takes an explicit state and returns a result paired with a new state. It does not call `GenServer.reply`, does not return GenServer callback tuples (`{:reply, _, _}`, `{:noreply, _}`), and does not pattern match on `from`. Beyond that, it is ordinary Elixir: it can emit telemetry, read or write ETS tables, and call other modules (including those fronted by an Agent, Registry, or GenServer) as needed.
+
+**Correct:**
+
+```elixir
+# lib/my_app/inventory/impl.ex
+defmodule MyApp.Inventory.Impl do
+  def reserve(state, sku, qty) do
+    case Map.get(state.stock, sku) do
+      n when is_integer(n) and n >= qty ->
+        :telemetry.execute([:inventory, :reserved], %{qty: qty}, %{sku: sku})
+        {:ok, deduct_stock(state, sku, qty)}
+
+      _ ->
+        {{:error, :insufficient_stock}, state}
+    end
+  end
+
+  defp deduct_stock(state, sku, qty) do
+    %{state | stock: Map.update!(state.stock, sku, &(&1 - qty))}
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory/impl.ex
+defmodule MyApp.Inventory.Impl do
+  # Returns GenServer callback tuples and accepts `from` -
+  # couples Impl to the callback it is invoked from.
+  def reserve(state, sku, qty, from) do
+    case Map.get(state.stock, sku) do
+      n when is_integer(n) and n >= qty ->
+        GenServer.reply(from, :ok)
+        {:noreply, deduct_stock(state, sku, qty)}
+
+      _ ->
+        {:reply, {:error, :insufficient_stock}, state}
+    end
+  end
+end
+```
+
+**Why:** What makes `Impl` testable is that it operates on plain state and speaks in the vocabulary of functions, not GenServer callbacks. Once `Impl` returns `{:reply, _, _}` or accepts a `from` tuple, the Server and Impl collapse into each other, and tests can only exercise Impl through a live process.
+
+Things that are NOT required for Impl to be testable, despite common confusion: the absence of telemetry, the absence of calls to other (possibly named) processes, or the absence of timers. A timer is scheduled with `Process.send_after(self(), _, _)` inside `Impl` is a coupling choice to weigh on a case-by-case basis (`self()` points to the test process when called from a test), but it is not categorically wrong.
+
+### Rule 3: Server callbacks are thin dispatchers
+
+Each callback calls one `Impl` function and wraps the result in the appropriate GenServer return tuple. No business logic in callback bodies.
+
+**Correct:**
+
+```elixir
+# lib/my_app/inventory/server.ex
+def handle_call({:reserve, sku, qty}, _from, state) do
+  {result, new_state} = Impl.reserve(state, sku, qty)
+  {:reply, result, new_state}
+end
+
+def handle_info(:cleanup_expired_reservations, state) do
+  new_state = Impl.expire_reservations(state, DateTime.utc_now())
+  {:noreply, new_state}
+end
+```
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory/server.ex
+def handle_call({:reserve, sku, qty}, _from, state) do
+  case Map.get(state.stock, sku) do
+    n when is_integer(n) and n >= qty ->
+      new_state = %{state | stock: Map.update!(state.stock, sku, &(&1 - qty))}
+      {:reply, :ok, new_state}
+
+    _ ->
+      {:reply, {:error, :insufficient_stock}, state}
+  end
+end
+```
+
+**Why:** Callback-embedded logic cannot be tested without starting the process, and it accumulates. Thin callbacks make the Server module boring to review (one pattern per callback shape) and keep `Impl` the single place reviewers look for logic changes.
+
+### Rule 4: Callers depend on the API module, not the Server
+
+The API module is the boundary of the domain. Callers' alias and call it. `MyApp.Inventory.Server` and `MyApp.Inventory.Impl` is implementation detail, addressable only from inside the domain.
+
+**Correct:**
+
+```elixir
+# anywhere in lib/my_app/...
+alias MyApp.Inventory
+Inventory.reserve("sku-1", 3)
+```
+
+**Wrong:**
+
+```elixir
+# call site reaching past the boundary into the Server
+GenServer.call(MyApp.Inventory.Server, {:reserve, "sku-1", 3})
+```
+
+**Why:** Loose coupling is what makes the implementation choice reversible. When every caller depends on `MyApp.Inventory`. The question of whether the domain is a GenServer, an Agent, a Task pool, a process per entity behind a Registry, or just a plain library lies entirely within `lib/my_app/inventory/`. Swapping implementations does not propagate to call sites. If callers reach through to `GenServer.call(MyApp.Inventory.Server, ...)` directly, the server is no longer an implementation detail; it is part of the public contract, and removing it means touching every call site in the codebase.
+
+## Consequences
+
+- Business-logic tests run directly against `Impl` with explicit state. No `start_supervised!`, no async ceremony.
+- Process-level tests cover only the dispatch, startup, and handle_info paths.
+- Moving logic between a GenServer and a plain library is a single-file change at the API layer.
+- The question from ADR-001 ("Should this be a GenServer at all?") is cheap to revisit because the logic does not move.

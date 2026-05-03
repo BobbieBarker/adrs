@@ -1,0 +1,96 @@
+domain: elixir-otp
+title: Elixir OTP / GenServer
+description: ADRs covering OTP, GenServer, supervision, BEAM scheduling, and stateful-process testing.
+
+adrs:
+  - id: 1
+    file: adr-001-reach-for-simpler-primitives-before-genserver.md
+    title: Reach for Simpler Primitives Before GenServer
+    description: When working on a stateful or service-shaped module, choose the right OTP primitive before reaching for GenServer.
+    applies_to:
+      content_match:
+        - "use GenServer"
+        - "GenServer.start_link"
+        - "Agent.start"
+        - "Agent.start_link"
+
+  - id: 2
+    file: adr-002-separate-business-logic-from-server-mechanics.md
+    title: Separate GenServer Business Logic From Server Mechanics
+    description: When implementing or modifying a GenServer, split it into API, Server, and Impl modules across three files.
+    applies_to:
+      paths:
+        - "**/*_server.ex"
+        - "**/*_impl.ex"
+      content_match:
+        - "use GenServer"
+
+  - id: 3
+    file: adr-003-keep-state-small-push-storage-out-of-process.md
+    title: Keep GenServer State Small; Push Storage Out of Process
+    description: When designing GenServer state, keep coordination data in-process and push bulk storage out.
+    applies_to:
+      paths:
+        - "**/*_server.ex"
+        - "**/*_impl.ex"
+      content_match:
+        - "use GenServer"
+        - ":ets.new"
+        - "defstruct"
+
+  - id: 4
+    file: adr-004-never-block-the-processing-loop.md
+    title: Never Block the GenServer Processing Loop
+    description: When writing a GenServer callback, do not perform blocking I/O or unbounded computation inline.
+    applies_to:
+      paths:
+        - "**/*_server.ex"
+      content_match:
+        - "def handle_call"
+        - "def handle_cast"
+        - "def handle_info"
+
+  - id: 5
+    file: adr-005-get-slow-work-off-the-loop.md
+    title: Get Slow Work Off the Processing Loop
+    description: When a callback needs slow work, use handle_continue, Task.Supervisor, or GenServer.reply.
+    applies_to:
+      content_match:
+        - "handle_continue"
+        - "Task.Supervisor"
+        - "GenServer.reply"
+        - "async_nolink"
+
+  - id: 6
+    file: adr-006-use-genstage-for-producer-consumer-pipelines.md
+    title: Use GenStage for Producer-Consumer Pipelines
+    description: When building a producer-consumer pipeline, use GenStage, Flow, or Broadway. Do not build it on naked cast.
+    applies_to:
+      content_match:
+        - "GenStage"
+        - "Broadway"
+        - "Flow"
+        - "GenServer.cast"
+
+  - id: 7
+    file: adr-007-design-genservers-for-test-isolation.md
+    title: Design GenServers for Test Isolation
+    description: When implementing or testing a GenServer, accept a configurable name, validate opts with NimbleOptions, and inject collaborators.
+    applies_to:
+      paths:
+        - "test/**/*_test.exs"
+        - "**/*_server.ex"
+      content_match:
+        - "use GenServer"
+        - "NimbleOptions"
+
+  - id: 8
+    file: adr-008-graceful-shutdown-requires-trap-exit-and-realistic-shutdown.md
+    title: Graceful Shutdown Requires trap_exit and a Realistic :shutdown
+    description: When a GenServer needs cleanup on shutdown, trap exits and set a realistic :shutdown budget. Do not treat terminate/2 as durable storage.
+    applies_to:
+      content_match:
+        - "def terminate"
+        - "trap_exit"
+        - "child_spec"
+        - "shutdown:"

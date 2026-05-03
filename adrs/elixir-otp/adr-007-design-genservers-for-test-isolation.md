@@ -1,0 +1,215 @@
+---
+type: adr
+id: 7
+title: Design GenServers for Test Isolation
+status: accepted
+date: 2026-04-29
+tags: [elixir, otp, genserver, testing, dependency-injection]
+description: Every GenServer accepts a configurable :name and validates its opts at start. When the server has substitutable collaborators or owns storage, inject them via opts and use a library with a sandbox adapter.
+---
+
+# ADR-007: Design GenServers for Test Isolation
+
+## Context
+
+A GenServer that registers itself under a fixed global atom can only exist once per VM. Every test that touches it either serializes against every other test or shares state with it. Neither supports a healthy test suite.
+
+Test isolation begins with one universal choice: every GenServer accepts a configurable name. Beyond that, additional choices apply when the server has substitutable collaborators or owns storage. Not every GenServer does. A pure-coordination server with no external dependencies needs only the configurable name; the situational rules in this ADR apply when their conditions are met.
+
+## Decision
+
+Two rules apply to every GenServer. Two more apply only when their condition is met.
+
+### Universal rules
+
+#### Rule 1: Every GenServer accepts a configurable :name
+
+The server's registered name is set in opts, with a sensible default for production. This is non-negotiable. Without it, tests cannot spin up isolated instances.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Inventory.Server do
+  use GenServer
+
+  def start_link(%{name: name} = opts) do
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+end
+
+# in a test:
+setup do
+  name = :"inventory_#{System.unique_integer([:positive])}"
+  start_supervised!({MyApp.Inventory.Server, %{name: name}})
+  {:ok, server: name}
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Inventory.Server do
+  use GenServer
+
+  def start_link(_opts),
+    do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+end
+```
+
+**Why:** In the wrong version, `__MODULE__` is registered globally, and two instances cannot coexist. Every test that starts the server either blocks other tests or shares state with them. In the correct version, the name is an option provided by the caller. Production code passes a default at the supervision tree; tests pass a unique atom per test. The suite runs `async: true`.
+
+#### Rule 2: Pass opts as maps and validate with NimbleOptions
+
+Accept opts as a map, not a keyword list. Validate them at the start using a declarative schema. `NimbleOptions` is the standard Elixir library for this, and it's what Phoenix, Broadway, ChromicPDF, and many parts of the ecosystem use. Declare the schema as a module attribute, validate at the boundary, and let the library handle type checking, defaults, required-key enforcement, and error messages.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Inventory.Server do
+  use GenServer
+
+  @opts_schema NimbleOptions.new!(
+    name: [
+      type: :any,
+      required: true,
+      doc: "Registered name. An atom or `:via` tuple."
+    ],
+    threshold: [
+      type: :pos_integer,
+      default: 100,
+      doc: "Mailbox length above which new work is shed."
+    ],
+    cache: [
+      type: :atom,
+      default: MyApp.Inventory.Cache,
+      doc: "Cache module implementing the storage adapter."
+    ]
+  )
+
+  def start_link(opts) when is_map(opts) do
+    opts =
+      opts
+      |> Keyword.new()
+      |> NimbleOptions.validate!(@opts_schema)
+      |> Map.new()
+
+    GenServer.start_link(__MODULE__, opts, name: opts.name)
+  end
+
+  def init(opts), do: {:ok, Impl.initial_state(opts)}
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Inventory.Server do
+  use GenServer
+
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  def init(opts) do
+    {:ok,
+     %{
+       threshold: Keyword.get(opts, :threshold, 100)
+       # bad or missing opt silently becomes the default; the bug surfaces in production
+     }}
+  end
+end
+```
+
+**Why:** Validation belongs at the process boundary. `NimbleOptions` declares the contract once, with required keys, types, defaults, and documentation. The library produces precise error messages when a caller passes the wrong shape, and the schema doubles as auto-generated documentation. A server started with bad opts fails immediately at `start_link` with a typed error before it is registered or accepts traffic. Hand-rolled `validate_opts!` functions accumulate special cases and skew over time; a declarative schema does not.
+
+Internally, opts stay as maps so they are pattern-matchable in callbacks (`def init(%{name: name, cache: cache} = opts)`) and accessed by dot syntax (`opts.name`) rather than keyword-list helpers. The boundary conversion (map in, kw list to `NimbleOptions`, map out) is a single, localized cost incurred only during `start_link`.
+
+The tradeoff: this deviates from the keyword-list convention common at Elixir call sites (`Mod.start_link(name: :foo)` becomes `Mod.start_link(%{name: :foo})`). The benefit is that the opts are validated at the boundary and pattern-matchable everywhere internally.
+
+### Situational rules
+
+These apply only when the condition in their statement is met. They are NOT defaults to apply to every GenServer.
+
+#### Rule 3: Inject substitutable collaborators via opts (only when present)
+
+If the server calls into a collaborator that tests need to substitute (a cache, an external API client, a clock, a mailer), accept the collaborator module via opts with a sensible production default.
+
+This rule does NOT apply to GenServers with no substitutable collaborators. A pure-coordination server that holds its own state, dispatches its own messages, and calls only into pure functions or already-isolated context modules needs no DI. Adding it as a ceremony hurts readability.
+
+**Correct:**
+
+```elixir
+def start_link(%{name: name} = opts) do
+  opts = Map.put_new(opts, :cache, MyApp.Inventory.Cache)
+  GenServer.start_link(__MODULE__, opts, name: name)
+end
+
+def init(opts), do: {:ok, Impl.initial_state(opts)}
+
+# in a test:
+setup do
+  start_supervised!(
+    {MyApp.Inventory.Server, %{name: :test_inv, cache: StubCache}}
+  )
+  :ok
+end
+```
+
+**Wrong:**
+
+```elixir
+def init(_) do
+  {:ok, Impl.initial_state(cache: MyApp.Inventory.Cache)}
+end
+```
+
+**Why:** When the cache is hardcoded, tests cannot substitute a stub without `Application.put_env` hacks or a `Mox.defmock` against a behavior the module does not declare. With the cache injected via opts, production code is unchanged, and tests pass a stub directly. Both run `async: true` against per-test instances. The reverse failure mode is also worth naming: GenServers with no real collaborators that grow opt-injected dependencies "just in case" become noisier without becoming more testable.
+
+#### Rule 4: Delegate storage to a cache library with a sandbox adapter (only when storage is present)
+
+If the server owns storage with TTLs, eviction, or key-scoped operations, do not hand-roll it with `:ets.new(:named_table)` inside `init/1`. Use a library that provides an adapter pattern over storage backends and a sandbox adapter for test isolation.
+
+This rule does NOT apply to GenServers with no storage of their own. State that lives in the process struct (within the bounds set by ADR-003) is fine without ceremony.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Inventory.Cache do
+  use Cache,
+    adapter: Cache.ETS,
+    name: :inventory_cache,
+    sandbox?: Mix.env() === :test,
+    opts: []
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Inventory.Server do
+  use GenServer
+
+  def init(_) do
+    :ets.new(:inventory_cache, [:named_table, :public, read_concurrency: true])
+    {:ok, %{}}
+  end
+
+  def handle_call({:get, key}, _from, state) do
+    {:reply, :ets.lookup(:inventory_cache, key), state}
+  end
+end
+```
+
+**Why:** In the wrong version, the ETS table name is a global atom. Two tests that touch the server race on the same table. Cleanup requires either `async: false` or a `setup` block that deletes and recreates the table, both of which erode the suite. There is also no way to swap the storage backend for Redis, `:persistent_term`, or another adapter without rewriting the server. In the correct version, `elixir_cache` (or a comparable adapter pattern library) exposes a single API across multiple backends, and its Sandbox adapter provides each test with an isolated namespace via `Cache.SandboxRegistry`. The suite stays `async: true` and no test sees another test's data.
+
+Parameterizing the ETS table name via opts (e.g., deriving it from the server name) is sometimes proposed as a lighter alternative. It is not. It fixes the test-parallelism collision but leaves the Server welded to `:ets` calls, which is the larger problem. Code that owns storage uses an adapter-pattern cache library. Anything less is incomplete.
+
+## Consequences
+
+- Every GenServer takes a configurable name and is testable in isolation.
+- Every GenServer fails fast on bad opts, before it accepts traffic.
+- Opts are maps everywhere they appear: callers, `start_link`, `init`, `Impl`. Pattern matching is the default tool for accessing them.
+- Dependency injection applies only where collaborators need to be substitutable. Pure-coordination GenServers stay simple.
+- Storage-owning GenServers delegate to a cache abstraction. Pure-coordination GenServers do not.
+- Tests run `async: true` by default. Per-test instances with stubbed collaborators are the norm.

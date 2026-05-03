@@ -1,0 +1,81 @@
+---
+description: "When building a producer-consumer pipeline, use GenStage, Flow, or Broadway. Do not build it on naked cast."
+alwaysApply: false
+---
+
+# ADR-006: Use GenStage for Producer-Consumer Pipelines
+
+## Context
+
+When one process generates work, and another handles it, and the producer can outpace the consumer, the consumer's mailbox grows unboundedly. The mailbox is a process resource: as it grows, GC pauses scale with it, observability calls like `process_info` degrade against it (see OTP issues #5481 and #6494), and the node eventually runs out of memory.
+
+GenServer's `cast` provides no flow control. A producer firing a `cast` at a slower consumer has no way to know it should slow down. `GenStage` is the OTP primitive built specifically for this problem; `Flow` and `Broadway` are higher-level libraries built on top of it. They implement demand-driven flow control: the consumer asks for N events, and the producer sends exactly N events. The mailbox cannot grow beyond demand in flight.
+
+## Decision
+
+### Rule 1: Use GenStage / Flow / Broadway for producer-consumer pipelines
+
+If the problem has the shape "process A produces work, process B handles it, and A can outpace B," do not build it with a `cast` between two GenServers. Reach for GenStage, or one of the libraries built on it.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Ingest.Producer do
+  use GenStage
+
+  def start_link(opts),
+    do: GenStage.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def init(_), do: {:producer, %{}}
+
+  def handle_demand(demand, state) do
+    events = pull_events(demand)
+    {:noreply, events, state}
+  end
+end
+
+defmodule MyApp.Ingest.Consumer do
+  use GenStage
+
+  def start_link(opts),
+    do: GenStage.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def init(_) do
+    {:consumer, %{}, subscribe_to: [{MyApp.Ingest.Producer, max_demand: 10}]}
+  end
+
+  def handle_events(events, _from, state) do
+    Enum.each(events, &process_event/1)
+    {:noreply, [], state}
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Ingest do
+  def publish(event), do: GenServer.cast(MyApp.Ingest.Server, {:event, event})
+end
+
+defmodule MyApp.Ingest.Server do
+  use GenServer
+
+  def handle_cast({:event, event}, state) do
+    # Producers fire cast; this server has no way to push back.
+    # If publishers outpace processing, the mailbox grows unboundedly.
+    {:noreply, Impl.ingest(state, event)}
+  end
+end
+```
+
+**Why:** In the wrong version, every call to `publish` succeeds immediately. The consumer has no mechanism to signal "slow down." Under sustained load, the consumer's mailbox grows without bound. GC pauses on that process scale with the mailbox, `process_info` calls degrade, and the node eventually runs out of memory.
+
+In the correct version, the consumer subscribes with `max_demand: 10`, telling the producer, "I can handle up to ten events." The producer sends ten and waits. When the consumer finishes, it asks for more. The mailbox cannot grow beyond demand in flight, by construction. Broadway and Flow add concurrency, batching, partitioning, and acknowledgment on top of this primitive, but the underlying flow-control mechanism is the same.
+
+## Consequences
+
+- Producer-consumer pipelines use GenStage, Flow, or Broadway. They do not use naked `cast` between processes.
+- Mailbox growth is treated as a system signal: the response is structural back-pressure, not faster processing.
+- Servers with no producer-consumer shape do not need GenStage. The rule applies when its condition applies.
+

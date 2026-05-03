@@ -1,0 +1,253 @@
+---
+description: "When working on a stateful or service-shaped module, choose the right OTP primitive before reaching for GenServer."
+alwaysApply: false
+---
+
+# ADR-001: Reach for Simpler Primitives Before GenServer
+
+## Context
+
+GenServer is frequently reached for as a default for any stateful or service-shaped behavior. Most of those uses do not require the mailbox serialization that GenServer exists to provide. Reaching for it when a simpler primitive fits creates a single-point bottleneck, introduces a process lifecycle to reason about, and makes the code harder to test.
+
+Simpler OTP primitives (plain modules, `Agent`, `Task`, `Registry`, and ETS) cover most cases where engineers write GenServers.
+
+## Decision
+
+Work the ladder. Use the first primitive that fits.
+
+### Rule 1: Plain module for pure functions
+
+If the behavior holds no state and coordinates nothing, write a module.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Pricing do
+  def calculate_total(items, discount_code) do
+    items
+    |> Enum.map(&item_total/1)
+    |> Enum.sum()
+    |> apply_discount(discount_code)
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Pricing do
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def calculate_total(items, code), do: GenServer.call(__MODULE__, {:calc, items, code})
+
+  def init(_), do: {:ok, nil}
+
+  def handle_call({:calc, items, code}, _from, state) do
+    total = items |> Enum.map(&item_total/1) |> Enum.sum() |> apply_discount(code)
+    {:reply, total, state}
+  end
+end
+```
+
+**Why:** The GenServer version holds no state and adds mailbox serialization to a computation that does not require it. A pure module has no lifecycle, no supervisor relationship, and no mailbox. Calls do not queue behind unrelated traffic.
+
+### Rule 2: Agent for simple shared state
+
+If the operations reduce to reading or replacing a value, use `Agent`.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.FeatureFlags do
+  def start_link(initial),
+    do: Agent.start_link(fn -> initial end, name: __MODULE__)
+
+  def enabled?(flag),
+    do: Agent.get(__MODULE__, &Map.get(&1, flag, false))
+
+  def set(flag, value),
+    do: Agent.update(__MODULE__, &Map.put(&1, flag, value))
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.FeatureFlags do
+  use GenServer
+
+  def start_link(initial), do: GenServer.start_link(__MODULE__, initial, name: __MODULE__)
+  def enabled?(flag), do: GenServer.call(__MODULE__, {:enabled?, flag})
+  def set(flag, value), do: GenServer.cast(__MODULE__, {:set, flag, value})
+
+  def init(initial), do: {:ok, initial}
+
+  def handle_call({:enabled?, flag}, _from, state),
+    do: {:reply, Map.get(state, flag, false), state}
+
+  def handle_cast({:set, flag, value}, state),
+    do: {:noreply, Map.put(state, flag, value)}
+end
+```
+
+**Why:** `Agent` is a GenServer with a narrower API for the get/update case. It communicates that no message-handling complexity exists. Upgrade to GenServer when timers, `handle_info`, or custom dispatch are needed.
+
+### Rule 3: Task or Task.Supervisor for concurrent work
+
+If the process lifetime matches the lifetime of a unit of work, use `Task`. For supervised concurrency and cancellation, use `Task.Supervisor`.
+
+**Correct:**
+
+```elixir
+def send_welcome_emails(users) do
+  MyApp.TaskSupervisor
+  |> Task.Supervisor.async_stream_nolink(
+    users,
+    &Mailer.send_welcome/1,
+    max_concurrency: 10
+  )
+  |> Enum.to_list()
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.EmailSender do
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  def send_welcome_emails(users), do: GenServer.cast(__MODULE__, {:send_all, users})
+
+  def init(_), do: {:ok, []}
+
+  def handle_cast({:send_all, users}, state) do
+    Enum.each(users, &Mailer.send_welcome/1)
+    {:noreply, state}
+  end
+end
+```
+
+**Why:** `Task.Supervisor` provides concurrency limits, supervision, and per-task lifecycle. The GenServer version serializes the batch through one process (no concurrency), couples the caller to the worker, and has no built-in backpressure.
+
+### Rule 4: Registry for named process lookup
+
+If the purpose of the server is to map keys to processes, use `Registry`.
+
+**Correct:**
+
+```elixir
+# Supervision tree:
+{Registry, keys: :unique, name: MyApp.SessionRegistry}
+
+# Registration via :via tuple at start time:
+def start_session(session_id, opts) do
+  name = {:via, Registry, {MyApp.SessionRegistry, session_id}}
+  MyApp.Session.start_link(Map.put(opts, :name, name))
+end
+
+def lookup(session_id) do
+  case Registry.lookup(MyApp.SessionRegistry, session_id) do
+    [{pid, _meta}] -> {:ok, pid}
+    [] -> {:error, :not_found}
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.SessionManager do
+  use GenServer
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
+  def lookup(id), do: GenServer.call(__MODULE__, {:lookup, id})
+  def register(id, pid), do: GenServer.call(__MODULE__, {:register, id, pid})
+
+  def init(state), do: {:ok, state}
+
+  def handle_call({:lookup, id}, _from, state),
+    do: {:reply, Map.get(state, id), state}
+
+  def handle_call({:register, id, pid}, _from, state),
+    do: {:reply, :ok, Map.put(state, id, pid)}
+end
+```
+
+**Why:** `Registry` uses per-shard ETS for concurrent-read lookup, supports `:via` tuples so processes register themselves in their own child spec, and monitors registered processes to clean up entries automatically. The GenServer version serializes every lookup through one mailbox and must implement monitoring by hand.
+
+### Rule 5: ETS for shared, concurrent-read state
+
+If multiple processes read the same state concurrently and writes are rare or can be coordinated, use ETS with an owning process for lifecycle.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.FlagStore do
+  use GenServer
+
+  @table :feature_flags
+
+  def start_link(initial),
+    do: GenServer.start_link(__MODULE__, initial, name: __MODULE__)
+
+  def enabled?(flag),
+    do: :ets.lookup_element(@table, flag, 2, false)
+
+  def set(flag, value),
+    do: GenServer.call(__MODULE__, {:set, flag, value})
+
+  def init(initial) do
+    :ets.new(@table, [:named_table, :protected, read_concurrency: true])
+    Enum.each(initial, fn {k, v} -> :ets.insert(@table, {k, v}) end)
+    {:ok, nil}
+  end
+
+  def handle_call({:set, flag, value}, _from, state) do
+    :ets.insert(@table, {flag, value})
+    {:reply, :ok, state}
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.FlagStore do
+  use GenServer
+
+  def start_link(initial), do: GenServer.start_link(__MODULE__, initial, name: __MODULE__)
+  def enabled?(flag), do: GenServer.call(__MODULE__, {:enabled?, flag})
+  def set(flag, value), do: GenServer.call(__MODULE__, {:set, flag, value})
+
+  def init(initial), do: {:ok, initial}
+
+  def handle_call({:enabled?, flag}, _from, state),
+    do: {:reply, Map.get(state, flag, false), state}
+
+  def handle_call({:set, flag, value}, _from, state),
+    do: {:reply, :ok, Map.put(state, flag, value)}
+end
+```
+
+**Why:** Reads in the ETS version bypass the owning process and scale with concurrent readers. In the map-in-state version, every read queues behind every write and every unrelated message. The owning process exists to manage table lifecycle and serialize writes; it is not on the read path.
+
+### When a GenServer IS the right answer
+
+Use GenServer when one or more of the following applies:
+
+- Serialized access to mutable state with multi-field invariants that ETS atomic operations cannot preserve.
+- Serialized access to a scarce resource (a TCP connection, a file handle, a rate-limited external API).
+- Long-lived coordination behavior combining calls, casts, `handle_info` messages, timers, and monitor events in a non-trivial way.
+
+If the reason does not fall into one of the above, use a simpler primitive.
+
+## Consequences
+
+- Most code previously written as GenServers becomes modules, Agents, Tasks, Registries, or ETS-backed code.
+- Pure logic is testable in isolation without process setup.
+- Operational surface area shrinks: fewer processes, fewer supervision decisions, fewer mailbox-related failure modes.
+- The GenServers that remain are load-bearing, and their presence signals genuine need.
+- Engineers must be fluent in the full primitive ladder (module, Agent, Task, Registry, ETS, GenServer) rather than GenServer alone.
+
