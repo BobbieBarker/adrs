@@ -1,6 +1,6 @@
 # adrs
 
-A callback blocks the processing loop. A process hoards state and pays for it in GC pauses. A `cast` pipeline grows an unbounded mailbox. `terminate/2` cleanup is silently skipped on a brutal kill. None of these is a careless bug; each is the consequence of a mental model that doesn't match what GenServer and the BEAM actually do. Humans get this wrong. LLMs get this wrong, often more confidently.
+Working with GenServer and the BEAM rewards a precise mental model of how they actually behave. The wrong model produces the same predictable production failures: a callback blocks the processing loop, a process hoards state and pays for it in GC pauses, a `cast` pipeline grows an unbounded mailbox, `terminate/2` cleanup is silently skipped on a brutal kill. Humans build the wrong model. LLMs build the wrong model, often more confidently.
 
 Eight ADRs on the rules that follow from a correct understanding. Each is a single rule with a Wrong example, a Correct example, and a Why paragraph that names the BEAM mechanism behind the difference.
 
