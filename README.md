@@ -1,8 +1,10 @@
 # adrs
 
-Most production Elixir failures come from the same handful of GenServer mistakes: blocking the loop, hoarding state, building pipelines on naked cast, treating `terminate/2` as durable storage, registering names that can't run in parallel under test. Eight ADRs covering the rules that prevent them.
+A callback blocks the processing loop. A process hoards state and pays for it in GC pauses. A `cast` pipeline grows an unbounded mailbox. `terminate/2` cleanup is silently skipped on a brutal kill. None of these is a careless bug; each is the consequence of a mental model that doesn't match what GenServer and the BEAM actually do. Humans get this wrong. LLMs get this wrong, often more confidently.
 
-Each ADR is a single rule with a Wrong example, a Correct example, and a Why paragraph that names the BEAM mechanism behind the difference. The format reads cleanly as a reference for engineers and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review GenServer code.
+Eight ADRs on the rules that follow from a correct understanding. Each is a single rule with a Wrong example, a Correct example, and a Why paragraph that names the BEAM mechanism behind the difference.
+
+Written for engineers and shaped for LLMs to consume. The format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review GenServer code.
 
 ## The ADRs
 
