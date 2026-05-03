@@ -1,12 +1,12 @@
 # adrs
 
-Architecture Decision Records, written for engineers and shaped for LLMs to consume.
+Working with GenServer and the BEAM rewards a precise mental model of how they actually behave. The wrong model produces the same predictable production failures: a callback blocks the processing loop, a process hoards state and pays for it in GC pauses, a `cast` pipeline grows an unbounded mailbox, `terminate/2` cleanup is silently skipped on a brutal kill. Humans build the wrong model. LLMs build the wrong model, often more confidently.
 
-The first set covers Elixir OTP and GenServer practice. Future sets will cover other domains; the layout supports that without renaming anything.
+Eight ADRs on the rules that follow from a correct understanding. Each is a single rule with a Wrong example, a Correct example, and a Why paragraph that names the BEAM mechanism behind the difference.
 
-## Read the ADRs
+Written for engineers and shaped for LLMs to consume. The format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review GenServer code.
 
-### Elixir OTP / GenServer
+## The ADRs
 
 - [ADR-001: Reach for Simpler Primitives Before GenServer](adrs/elixir-otp/adr-001-reach-for-simpler-primitives-before-genserver.md)
 - [ADR-002: Separate GenServer Business Logic From Server Mechanics](adrs/elixir-otp/adr-002-separate-business-logic-from-server-mechanics.md)
@@ -17,9 +17,9 @@ The first set covers Elixir OTP and GenServer practice. Future sets will cover o
 - [ADR-007: Design GenServers for Test Isolation](adrs/elixir-otp/adr-007-design-genservers-for-test-isolation.md)
 - [ADR-008: Graceful Shutdown Requires trap_exit and a Realistic :shutdown](adrs/elixir-otp/adr-008-graceful-shutdown-requires-trap-exit-and-realistic-shutdown.md)
 
-## Use these in your agentic workflow
+## Integration
 
-The ADRs in `adrs/<domain>/` are the source of truth. The `dist/<domain>/` folder carries pre-rendered bundles for the dominant agent harnesses. Pick the path that matches your tooling.
+Pre-rendered bundles for each tool live in `dist/elixir-otp/`. Pick the one for your harness.
 
 ### Cursor
 
@@ -47,18 +47,17 @@ cp /path/to/adrs/dist/elixir-otp/claude-code/.claude/rules/*.md .claude/rules/
 
 If your project already has a `CLAUDE.md`, append the contents of the rendered one rather than overwriting. The per-file copy of the rules avoids touching any existing `.claude/agents/`, `.claude/settings.json`, or unrelated rule files.
 
-Claude Code reads `CLAUDE.md` at the start of every session and picks up files in `.claude/rules/` automatically. Rules with `paths:` frontmatter auto-attach when Claude reads matching files; rules without `paths` are loaded into every session unconditionally.
+Claude Code reads `CLAUDE.md` at the start of every session and picks up files in `.claude/rules/` automatically. Rules with `paths:` frontmatter auto-attach when Claude reads matching files; rules without `paths` load into every session unconditionally.
 
 Reference: <https://code.claude.com/docs/en/memory>
 
 ### Aider, raw API harnesses, one-off use
 
 ```sh
-# Aider: read the bundle as a read-only context file
 aider --read /path/to/adrs/dist/elixir-otp/bundle.md
 ```
 
-Aider has no auto-discovery for a `CONVENTIONS.md` file; you always pass it via `--read`. By convention people name the file `CONVENTIONS.md`, but the name does not matter to Aider. To avoid retyping the path on every invocation, put it in `.aider.conf.yml`:
+Aider has no auto-discovery; you always pass the file via `--read`. To avoid retyping the path on every invocation, put it in `.aider.conf.yml`:
 
 ```yaml
 # .aider.conf.yml
@@ -66,51 +65,39 @@ read:
   - /path/to/adrs/dist/elixir-otp/bundle.md
 ```
 
-`bundle.md` is the eight ADRs concatenated. It pays full token cost on every turn and gets cached if prompt caching is enabled. Use the harness-specific bundles above when you can; fall back to this when you can't.
+`bundle.md` is the eight ADRs concatenated into one file. It pays full token cost on every turn and gets cached if prompt caching is enabled. Use the harness-specific bundles above when you can; fall back to this when you can't.
 
 References: <https://aider.chat/docs/usage/conventions.html>, <https://aider.chat/docs/config/aider_conf.html>
 
 ### Custom harness or your own retriever (RAG)
 
-`dist/<domain>/adrs.jsonl` is one ADR per row, with `id`, `domain`, `title`, `description`, `tags`, `applies_to`, and `body`. Embed the `body` field with the model of your choice; store the rest as metadata. The `applies_to` patterns are advisory; your retriever decides what to do with them.
+`dist/elixir-otp/adrs.jsonl` is one ADR per row, with `id`, `domain`, `title`, `description`, `tags`, `applies_to`, and `body`. Embed the `body` field with the model of your choice; store the rest as metadata. The `applies_to` patterns are advisory; your retriever decides what to do with them.
 
-The `applies_to` shape (`paths` globs and `content_match` substrings) is the same data used to generate the harness-specific bundles, so a custom retriever can match the bundles' behavior by consuming this manifest directly.
+The `applies_to` shape (`paths` globs and `content_match` substrings) is the same data used to generate the harness-specific bundles, so a custom retriever can match those bundles' behavior by consuming this manifest directly.
 
 ### Obsidian + qmd / ClawVault
 
-The ADRs in `adrs/<domain>/` use vault-conformant frontmatter (`type: adr`, `id`, `title`, `status`, `date`, `tags`, `description`). Clone the repo into your vault's directory and your existing semantic-retrieval tooling will index them.
+The ADRs use vault-conformant frontmatter (`type: adr`, `id`, `title`, `status`, `date`, `tags`, `description`). Clone the repo into your vault's directory and existing semantic-retrieval tooling will index them.
 
-## How this repo is organized
+## Repo layout
 
 ```
-adrs/
-└── <domain>/                     # source of truth (Markdown + manifest)
-    ├── adr-rules.yaml            # path/content patterns per ADR
-    └── adr-NNN-...md             # one ADR per file
+adrs/elixir-otp/
+├── adr-rules.yaml          # path/content patterns per ADR
+└── adr-NNN-*.md            # one ADR per file
 
-dist/                             # pre-rendered, regenerated on release
-└── <domain>/
-    ├── cursor/                   # native Cursor rule files
-    ├── claude-code/              # CLAUDE.md + adrs/ drop-in bundle
-    ├── adrs.jsonl                # for retriever-based use
-    └── bundle.md                 # single concatenated file
+dist/elixir-otp/            # generated; do not edit by hand
+├── cursor/                 # Cursor .mdc rules
+├── claude-code/            # CLAUDE.md + .claude/rules/
+├── adrs.jsonl              # one ADR per row
+└── bundle.md               # concatenated
 
 tools/
-└── build_dist.exs                # regenerates dist/ from adrs/ + manifests
+└── build_dist.exs          # regenerates dist/
 ```
 
-## Regenerating `dist/`
-
-`dist/` is checked in so consumers can `curl` files from raw GitHub without cloning. To regenerate:
-
-```sh
-elixir tools/build_dist.exs
-```
-
-The script reads each `adrs/<domain>/adr-rules.yaml`, renders all four bundle formats, and writes them under `dist/<domain>/`. Requires Elixir 1.12 or later (uses `Mix.install`).
-
-Edit the source ADRs and the manifest. Do not edit files in `dist/`; they are overwritten on every build.
+Run `elixir tools/build_dist.exs` after editing the source ADRs or manifest. Requires Elixir 1.12 or later (uses `Mix.install`). CI blocks PRs when `dist/` is out of sync with `adrs/`.
 
 ## License
 
-[MIT](LICENSE). Do whatever you want with these. A reference back if you publish a fork or a derived work is appreciated, not required.
+[MIT](LICENSE).
