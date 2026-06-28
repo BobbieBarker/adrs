@@ -1,0 +1,70 @@
+---
+description: "When a defstruct approaches or exceeds 32 declared fields, nest optional, cold, or co-accessed fields so the struct stays a flat map."
+alwaysApply: false
+---
+
+# ADR-010: Structs with 32 fields or more
+
+## Context
+
+A struct is a compile-time map with a fixed set of keys plus a hidden `__struct__` metadata key. The BEAM has two internal map representations: a flat map and a hash map. A flat map is stored as two tuples, one holding the keys and one holding the values. A hash map (a HAMT) has a more elaborate node structure that scales to large key counts but does not share its key space.
+
+The VM uses a flat map for up to 32 keys and a hash map above that. Because a struct carries the extra `__struct__` key, the practical ceiling is 31 declared fields. A struct at or above 32 declared fields crosses into hash-map representation, and two optimizations disappear at once. First, updating a flat map (`%s{field: v}`) reuses the existing key tuple and allocates only a new values tuple, so the keys are never recopied. Second, every instance of a given struct constructed inside the same module shares one key tuple fixed at compile time, so building many structs with `%MyStruct{...}` notation does not re-pay for the keys each time. A hash-map struct loses both: keys are no longer shared on update, and instances no longer share a compile-time key tuple.
+
+The fix is structural, not cosmetic. Keep the declared field count under 32 by grouping fields into nested data so the top-level struct stays a flat map.
+
+## Decision
+
+### Rule 1: Keep a struct under 32 declared fields
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Account do
+  # 8 declared fields: stays a flat map.
+  defstruct [
+    :id,
+    :email,
+    :name,
+    :status,
+    profile: %{},
+    billing: %{},
+    preferences: %{},
+    metadata: %{}
+  ]
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Account do
+  # 35 declared fields: forced into hash-map representation.
+  defstruct [
+    :id,
+    :email,
+    :name,
+    :status,
+    :phone,
+    :avatar_url,
+    :timezone,
+    :locale,
+    :billing_street,
+    :billing_city,
+    :billing_zip,
+    :marketing_opt_in,
+    :last_login_at
+    # ...and 22 more fields (35 total)
+  ]
+end
+```
+
+**Why:** At 35 declared fields the VM represents `%MyApp.Account{}` as a hash map. Updating it (`%{account | status: :active}`) no longer shares the key tuple, so each update copies keys as well as values, and the many account structs built inside one module no longer share a single compile-time key tuple. The flat-map version keeps both forms of sharing. Three techniques bring the count back under the threshold: nest optional fields (those initialized to `nil`) under a `:metadata` or `:optionals` key, which also lets you pattern match on presence instead of probing for `nil`; nest rarely read or written fields into a nested struct; and collapse fields that are always accessed together (`billing_street`, `billing_city`, `billing_zip`) into a tuple or composite. Balance the grouping against ergonomics: fields that are read and written frequently are poor candidates for nesting.
+
+## Consequences
+
+- The struct stays a flat map, so `%s{field: v}` updates reuse the shared key tuple and allocate only a new values tuple.
+- Many instances built inside one module share a single compile-time key tuple, cutting the memory cost of construction.
+- Optional fields nested under `:metadata` become matchable by presence rather than by a sentinel `nil`.
+- Grouping is a deliberate API tradeoff: frequently accessed fields stay top level, while cold or co-accessed fields move into nested maps, structs, or tuples.
+

@@ -1,0 +1,103 @@
+---
+description: "When handling an expected, recoverable failure, match an {:ok, _} | {:error, _} tuple with case instead of wrapping a raising call in try/rescue."
+alwaysApply: false
+---
+
+# ADR-003: Exceptions for control-flow
+
+## Context
+
+Exception handling is not itself an anti-pattern. The anti-pattern is using `raise` and `try/rescue` to drive ordinary, expected control flow instead of `case` and pattern matching on result tuples.
+
+The mechanism matters. `raise` constructs an exception struct, captures a stacktrace by walking the current call stack, and then unwinds stack frames one by one until it reaches the nearest enclosing `try`. A tagged tuple like `{:error, reason}` is an ordinary return value matched in constant time by a `case`. Routing the expected branches of a computation through exceptions therefore pays stacktrace capture and stack unwinding on the normal path, where a `case` pays nothing.
+
+A `rescue` clause matches by exception type, so it catches every exception of that type raised anywhere inside the protected block. It cannot distinguish the failure you anticipated (a missing file) from an unrelated bug raised by some other call in the same `try`. Pattern matching on `{:error, reason}` only matches the specific failure the callee declared, so a real bug still crashes loudly instead of being silently absorbed.
+
+Whether a given error is exceptional is the caller's decision. A library that only raises removes that choice and forces every caller into `try/rescue`. The convention that preserves the choice: expose a function that returns `{:ok, value} | {:error, reason}`, and a bang variant (`foo!`) built on top that raises.
+
+Raising directly is correct for structural errors, not semantic ones. `File.read(123)` should raise because `123` is never a valid filename. Tests, scripts, and one-off pipelines call the bang variants to fail fast with a clear message. Some frameworks (Phoenix) deliberately let code raise and convert those exceptions into responses through a protocol. The anti-pattern is specifically using exceptions for the expected, recoverable branches of normal flow.
+
+## Decision
+
+### Rule 1: Match result tuples; do not try/rescue an expected failure
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Reader do
+  def print_file(file) do
+    case File.read(file) do
+      {:ok, binary} -> IO.puts(binary)
+      {:error, reason} -> IO.puts(:stderr, "could not read file #{file}: #{reason}")
+    end
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Reader do
+  def print_file(file) do
+    try do
+      IO.puts(File.read!(file))
+    rescue
+      e -> IO.puts(:stderr, Exception.message(e))
+    end
+  end
+end
+```
+
+**Why:** A missing file is an expected outcome of reading a file, not an exceptional one. The wrong version raises through `File.read!/1`, capturing a stacktrace and unwinding the stack on a branch that is part of normal operation, then rebuilds the message from the exception. The `rescue e ->` clause is also indiscriminate: it would swallow an unrelated exception raised by `IO.puts/1` or by any future code added to the `try` block, masking real bugs as if they were the missing-file case. `File.read/1` returns the failure as a value, so `case` selects the branch in constant time and only the declared `{:error, reason}` shape matches.
+
+### Rule 2: Library authors expose a non-raising function and build the bang variant on top
+
+**Correct:**
+
+```elixir
+defmodule MyApp.HTTP.Error do
+  defexception [:reason]
+
+  @impl true
+  def message(%{reason: reason}), do: "request failed: #{inspect(reason)}"
+end
+
+defmodule MyApp.HTTP do
+  def fetch(url) do
+    case :httpc.request(url) do
+      {:ok, resp} -> {:ok, build_response(resp)}
+      {:error, reason} -> {:error, %MyApp.HTTP.Error{reason: reason}}
+    end
+  end
+
+  def fetch!(url) do
+    case fetch(url) do
+      {:ok, response} -> response
+      {:error, error} -> raise error
+    end
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.HTTP do
+  def fetch!(url) do
+    case :httpc.request(url) do
+      {:ok, resp} -> build_response(resp)
+      {:error, reason} -> raise "request failed: #{inspect(reason)}"
+    end
+  end
+end
+```
+
+**Why:** When the only API raises, every caller that wants to treat a failed request as ordinary flow has no option but `try/rescue`, inheriting the stacktrace-capture, unwind, and bug-masking costs from Rule 1. Returning `{:error, Exception.t}` hands the decision back to the caller: code that wants to recover matches the tuple, and code that does want to fail re-raises with `raise error`. The bang variant is exactly that re-raise wrapped once in the library, so `fetch!/1` is implemented on top of `fetch/1` rather than the reverse.
+
+## Consequences
+
+- Expected failures travel as `{:error, reason}` values matched by `case`, with no stacktrace capture or stack unwinding on the normal path.
+- `try/rescue` is reserved for genuinely exceptional conditions (invalid arguments, programmer error, boundary failures), where it catches only what is declared and does not absorb unrelated bugs.
+- Library functions ship in pairs: a tuple-returning `foo` and a raising `foo!` built on top, so callers keep the choice of whether a given error is exceptional.
+- Scripts, tests, and pipelines call the bang variant to fail fast with a clear message, while long-running code matches the tuple and recovers.
+

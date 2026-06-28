@@ -94,3 +94,33 @@ adrs:
         - "trap_exit"
         - "child_spec"
         - "shutdown:"
+
+  - id: 9
+    file: adr-009-send-minimal-data-between-processes.md
+    title: "Send Minimal Data Between Processes"
+    description: "When spawning a task or sending a message that references a large struct like a conn, pass only the fields the receiver needs (or an id it can fetch), never the whole struct."
+    applies_to:
+      content_match:
+        - "spawn(fn"
+        - "Task.async"
+        - "Task.async_stream"
+        - "GenServer.cast"
+        - "GenServer.call"
+        - "GenServer.start_link"
+        - "send("
+        - "conn"
+        - ":persistent_term"
+
+  - id: 10
+    file: adr-010-supervise-long-lived-processes.md
+    title: "Supervise Every Long-Lived Process"
+    description: "When a process must outlive the call that spawns it, start it under a supervisor (a static child for fixed processes, a DynamicSupervisor for runtime-created ones) rather than a bare spawn or hand-rolled start_link."
+    applies_to:
+      content_match:
+        - "spawn("
+        - "spawn_link("
+        - "spawn_monitor("
+        - "Process.spawn"
+        - "Agent.start_link"
+        - "GenServer.start_link"
+        - "Task.start("

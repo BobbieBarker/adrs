@@ -1,0 +1,67 @@
+---
+type: adr
+id: 5
+title: "Unrelated multi-clause function"
+status: accepted
+date: 2026-06-28
+tags: [elixir, anti-pattern, design, multi-clause, pattern-matching]
+description: "A multi-clause function shares one name, one @spec, and one @doc across every clause. Grouping unrelated behavior under that single contract widens the spec into a union of disjoint types that constrains no caller and forces the documentation into per-argument conditionals; split unrelated clauses into separately named functions."
+---
+# ADR-005: Unrelated multi-clause function
+
+## Context
+
+Multi-clause functions dispatch on the shape of their arguments by pattern matching on the function head. This is a core Elixir mechanism and the right tool when a single operation has variations (an empty list versus a non-empty one, a struct with one field value versus another). The anti-pattern appears when one function name is reused to host genuinely unrelated business logic, so each clause does something the other clauses have no relationship to.
+
+The cost comes from the fact that the function name, not the individual clause, is the unit of contract. All clauses share one `@spec` and one `@doc`. When the behaviors are unrelated, the `@spec` widens to a union of disjoint types (`update(Product.t() | Animal.t())`) that no longer constrains callers, and the `@doc` degenerates into a conditional narration of how the function behaves per argument combination. That conditional documentation is the reliable tell: if you cannot describe the function without "if given an X, ...; if given a Y, ...", the clauses are unrelated and belong under separate names.
+
+## Decision
+
+### Rule 1: One function name, one operation
+
+If two clauses implement unrelated business rules, give them distinct names (and, where the rules diverge enough, distinct modules).
+
+**Correct:**
+
+```elixir
+@doc "Updates a product."
+@spec update_product(Product.t()) :: Product.t()
+def update_product(%Product{count: count, material: material}) do
+  # ...
+end
+
+@doc "Updates an animal."
+@spec update_animal(Animal.t()) :: Animal.t()
+def update_animal(%Animal{count: count, skin: skin}) do
+  # ...
+end
+```
+
+**Wrong:**
+
+```elixir
+@doc """
+Updates a struct.
+
+If given a product, it reprices and restocks it.
+If given an animal, it feeds and reweighs it.
+"""
+@spec update(Product.t() | Animal.t()) :: Product.t() | Animal.t()
+def update(%Product{count: count, material: material}) do
+  # ...
+end
+
+def update(%Animal{count: count, skin: skin}) do
+  # ...
+end
+```
+
+**Why:** All clauses of `update/1` share one `@spec` and one `@doc`. Because the behaviors are unrelated, the `@spec` widens to `Product.t() | Animal.t()`, so the type checker can no longer tell a caller that passed an animal that a product-shaped result is wrong: the union admits both. The single `@doc` collapses into per-argument conditionals, which is the diagnostic that the clauses do not belong together. Distinct names give each operation a precise spec, a self-describing doc, and a call site that states which behavior it invoked. Keep clauses under one name only when they are variations of a single operation (`update_product/1` may still match `%Product{count: 0}` against a `material` guard) or when the function behaves uniformly for every input (as `struct/2` does for any struct given); in both cases the shared contract stays coherent. Note that this refactoring renames the public function, so it ripples to every caller.
+
+## Consequences
+
+- Each operation carries a precise `@spec` instead of a union of disjoint types that constrains nothing.
+- Documentation describes one behavior, not a conditional table keyed on argument shape.
+- Call sites name the operation they invoke, so dispatch is visible at the call rather than hidden in the function head.
+- The split renames a public function, so it is a breaking change to the function's contract and must be propagated to callers.
+- Multi-clause dispatch is retained for genuinely related variations and for functions that behave uniformly across all inputs.

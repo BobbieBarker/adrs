@@ -1,0 +1,72 @@
+---
+type: adr
+id: 7
+title: "Non-assertive map access"
+status: accepted
+date: 2026-06-28
+tags: [elixir, anti-pattern, maps, access, assertiveness, structs]
+description: "Access required map keys with static `map.key`, which raises `KeyError` at the access site, and reserve dynamic `map[:key]` for optional keys. Dynamic access on a missing required key returns `nil` through the Access behaviour, deferring the crash far from its cause."
+---
+# ADR-007: Non-assertive map access
+
+## Context
+
+Elixir maps expose two access notations, and they are not interchangeable. `map.key` compiles to a call that returns the value when the key exists and raises `KeyError` when it does not. For structs, whose field set is known at compile time, the compiler can additionally warn on a misspelled field before the code ever runs. `map[:key]` instead routes through the `Access` behaviour: it returns the value when the key exists and `nil` when it does not. It also supports runtime keys such as `map[some_var]`, which static access cannot.
+
+The anti-pattern is reaching for the dynamic `map[:key]` form on a key that is always supposed to be there. Because dynamic access cannot raise on a missing key, an absent required key yields `nil` instead of a crash. That `nil` then propagates through unrelated code and surfaces as a failure far from its cause (for example an `ArithmeticError` deep inside a later calculation), where the original mistake (a caller that built an incomplete map) is no longer visible. The notation also erases intent: a reader and the compiler can no longer tell which keys the function requires and which it merely tolerates.
+
+## Decision
+
+### Rule 1: Access required keys statically with `map.key`
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Geometry do
+  # Every point must carry :x and :y.
+  def magnitude(point) do
+    :math.sqrt(point.x * point.x + point.y * point.y)
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Geometry do
+  def magnitude(point) do
+    :math.sqrt(point[:x] * point[:x] + point[:y] * point[:y])
+  end
+end
+```
+
+**Why:** `point[:x]` goes through the `Access` behaviour and returns `nil` when `:x` is absent. A missing required key therefore produces `nil`, which feeds the multiplication and raises `ArithmeticError` on `nil * nil`, far from the caller that actually built the bad map. `point.x` raises `KeyError` at the access site the instant the key is missing, naming the key and the map, and for structs the compiler warns on a typo'd field at compile time. When you need to assert several required keys at once, pattern match them in the function head (`def magnitude(%{x: x, y: y})`), which is the assertive form covered by ADR-008.
+
+### Rule 2: Access optional keys dynamically with `map[:key]`
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Geometry do
+  # :z is present only for 3D points.
+  def depth(point), do: point[:z]
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Geometry do
+  def depth(point), do: point.z
+end
+```
+
+**Why:** `point.z` raises `KeyError` whenever `:z` is missing. For a genuinely optional key that is wrong: absence is a valid state and should yield `nil`, not a crash. `point[:z]` returns `nil` through the `Access` behaviour for a missing key, which is exactly the optional semantics you want. Reserve static access for keys whose absence is a bug and dynamic access for keys whose absence is allowed. When the default for a missing optional key is something other than `nil`, use `Map.get(point, :z, default)` rather than overloading either notation.
+
+## Consequences
+
+- A missing required key raises `KeyError` at the access site, not after a `nil` has travelled through unrelated code and crashed somewhere else.
+- The access notation documents, per key, whether that key is required (`map.key`) or optional (`map[:key]`), making the function's expectations legible to readers and the compiler.
+- Under static access on structs, the compiler warns on misspelled or non-existent fields at compile time.
+- For data shared across modules, an `@enforce_keys` struct makes required keys static by default and raises on construction. This adds a compile-time dependency: a change to the struct's fields forces dependent modules to recompile. Weigh that (and field-count limits) before defining wide structs; see ADR-010.
+- Dynamic access stays where it belongs: optional keys and `Access`-based traversal with runtime keys (`map[some_var]`).

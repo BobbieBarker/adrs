@@ -1,0 +1,96 @@
+---
+description: "When a comment restates what a function, variable, or expression already says, delete it and sharpen the names instead, reserving `@doc`/`@moduledoc` for actual documentation."
+alwaysApply: false
+---
+
+# ADR-001: Comments overuse
+
+## Context
+
+Comments that restate self-explanatory code make code less readable, not more. They add visual lines a reader must scan past, and they carry a maintenance liability that the code itself does not.
+
+The mechanism is the toolchain. The Elixir tokenizer discards every `#` comment before the compiler ever sees it, so nothing in the build checks a comment against the code beneath it. When the code changes and the comment does not, the comment silently lies, and a reader who trusts it is misled. Identifiers behave the opposite way: a function name, variable name, or module attribute is part of the program the compiler tracks, so it cannot drift out of sync with the behavior it names.
+
+Elixir also draws a hard line between comments and documentation. `@moduledoc` and `@doc` compile into the BEAM Docs chunk and are reachable and testable at runtime; a `#` comment is none of that. So a comment that should be a contract belongs in `@doc`/`@moduledoc`, and a comment that merely narrates obvious code belongs nowhere.
+
+## Decision
+
+### Rule 1: Replace explanatory comments with expressive names
+
+**Correct:**
+
+```elixir
+@five_min_in_seconds 60 * 5
+
+defp unix_five_min_from_now do
+  now = DateTime.utc_now()
+  unix_now = DateTime.to_unix(now, :second)
+  unix_now + @five_min_in_seconds
+end
+```
+
+**Wrong:**
+
+```elixir
+# Returns the Unix timestamp of 5 minutes from the current time
+defp unix_five_min_from_now do
+  # Get the current time
+  now = DateTime.utc_now()
+
+  # Convert it to a Unix timestamp
+  unix_now = DateTime.to_unix(now, :second)
+
+  # Add five minutes in seconds
+  unix_now + (60 * 5)
+end
+```
+
+**Why:** Every comment in the wrong version restates information the function name, the variable names, and the function calls already carry. Because the tokenizer strips those comments, nothing keeps them honest as the code evolves, so they rot into false statements. The correct version moves the same intent into names the compiler tracks. Promoting `60 * 5` to `@five_min_in_seconds` supplies the one fact the raw expression did not: what that number means at the point it is used.
+
+### Rule 2: Express contracts as documentation, not comments
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Accounts do
+  @moduledoc "Public API for creating and authenticating users."
+
+  @doc """
+  Authenticates a user from an `email` and `password`.
+
+  Returns `{:ok, user}` on success and `{:error, :unauthorized}` otherwise.
+  """
+  def authenticate(email, password) do
+    with {:ok, user} <- fetch_by_email(email),
+         :ok <- verify_password(user, password) do
+      {:ok, user}
+    end
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+# Public API for creating and authenticating users.
+defmodule MyApp.Accounts do
+  # Authenticates a user from an email and password.
+  # Returns {:ok, user} on success and {:error, :unauthorized} otherwise.
+  def authenticate(email, password) do
+    with {:ok, user} <- fetch_by_email(email),
+         :ok <- verify_password(user, password) do
+      {:ok, user}
+    end
+  end
+end
+```
+
+**Why:** The two versions read the same in source, but they compile to different artifacts. The `@moduledoc` and `@doc` text lands in the BEAM Docs chunk, so it is reachable through `h MyApp.Accounts`, through `Code.fetch_docs/1`, and through ExDoc, and `iex>` samples inside it run as doctests. The comment version is discarded by the tokenizer and is invisible to every one of those tools, untestable, and unreachable at runtime. A public contract written as a comment is a contract no tooling can surface or verify.
+
+## Consequences
+
+- Comments that restated code disappear; the names that replace them are tracked by the compiler and cannot drift out of sync with behavior.
+- Magic numbers gain names through module attributes, making intent explicit at each use site.
+- Public contracts live in `@doc`/`@moduledoc`, where the toolchain can surface and test them, instead of in comments no tool can reach.
+- The comments that remain carry genuinely non-obvious context (a workaround rationale, a link to an external constraint), so the presence of a comment now signals something worth reading.
+

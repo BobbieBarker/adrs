@@ -1,0 +1,118 @@
+domain: elixir-code-anti-patterns
+title: "Elixir Code Anti-Patterns"
+description: "ADRs codifying the official Elixir code-related anti-patterns: comment overuse, with/else complexity, in-clause extraction, dynamic atoms, parameter lists, namespace trespassing, assertive access, and struct size."
+
+adrs:
+  - id: 1
+    file: adr-001-comments-overuse.md
+    title: "Comments overuse"
+    description: "When a comment restates what a function, variable, or expression already says, delete it and sharpen the names instead, reserving `@doc`/`@moduledoc` for actual documentation."
+    applies_to:
+      content_match:
+        - "# Get the"
+        - "# Returns the"
+        - "# Convert"
+        - "# Add "
+        - "# Set the"
+        - "# Loop over"
+
+  - id: 2
+    file: adr-002-complex-else-clauses-in-with.md
+    title: "Complex `else` clauses in `with`"
+    description: "When a `with` expression grows an `else` block that handles errors from multiple `<-` clauses, normalize each step's failure in a dedicated private function and drop the `else`."
+    applies_to:
+      content_match:
+        - "with "
+        - "else"
+        - "<-"
+        - "{:error, _}"
+
+  - id: 3
+    file: adr-003-complex-extractions-in-clauses.md
+    title: "Complex extractions in clauses"
+    description: "When a multi-clause function head extracts struct or map fields that are only used in the body, bind just the pattern/guard variables (plus `= var`) in the head and extract the remaining fields inside the body."
+    applies_to:
+      content_match:
+        - "when"
+        - ") when"
+        - "{name: name, age: age}"
+        - "} = "
+
+  - id: 4
+    file: adr-004-dynamic-atom-creation.md
+    title: "Dynamic atom creation"
+    description: "When converting external or untrusted strings into atoms, restrict the result to a known set with pattern matching or String.to_existing_atom/1 instead of String.to_atom/1."
+    applies_to:
+      content_match:
+        - "String.to_atom"
+        - "List.to_atom"
+        - "binary_to_atom"
+        - "list_to_atom"
+        - "String.to_existing_atom"
+
+  - id: 5
+    file: adr-005-long-parameter-list.md
+    title: "Long parameter list"
+    description: "When a function takes more than a handful of positional parameters, group related ones into a map or struct and split unrelated ones into separate single-responsibility functions."
+    applies_to:
+      content_match:
+        - "def "
+        - "\\\\ nil"
+        - "\\\\ false"
+        - "\\\\ 0"
+
+  - id: 6
+    file: adr-006-namespace-trespassing.md
+    title: "Namespace trespassing"
+    description: "When naming modules in a library or package, prefix every module with the library's own name so module names stay globally unique on the node."
+    applies_to:
+      content_match:
+        - "defmodule Plug."
+        - "defmodule Phoenix."
+        - "defmodule Ecto."
+        - "defmodule Jason."
+        - "defmodule Mix."
+
+  - id: 7
+    file: adr-007-non-assertive-map-access.md
+    title: "Non-assertive map access"
+    description: "When reading a map key that must always exist, use static `map.key` access and reserve `map[:key]` for genuinely optional keys."
+    applies_to:
+      content_match:
+        - "[:"
+        - "get_in("
+        - "Access.get"
+        - "Map.get("
+
+  - id: 8
+    file: adr-008-non-assertive-pattern-matching.md
+    title: "Non-assertive pattern matching"
+    description: "When extracting fields from data of an assumed shape or branching on a function's return, destructure with a pattern match and enumerate the expected clauses instead of reaching for positional accessors or a catch-all `_`."
+    applies_to:
+      content_match:
+        - "Enum.at("
+        - "_ ->"
+        - "List.first("
+        - "List.last("
+        - "elem("
+
+  - id: 9
+    file: adr-009-non-assertive-truthiness.md
+    title: "Non-assertive truthiness"
+    description: "When combining boolean operands or values returned by Erlang APIs, use `and`/`or`/`not` instead of `&&`/`||`/`!` so a non-boolean operand raises instead of coercing as truthy."
+    applies_to:
+      content_match:
+        - "&&"
+        - "||"
+        - "&& is_"
+        - "|| is_"
+
+  - id: 10
+    file: adr-010-structs-with-32-fields-or-more.md
+    title: "Structs with 32 fields or more"
+    description: "When a defstruct approaches or exceeds 32 declared fields, nest optional, cold, or co-accessed fields so the struct stays a flat map."
+    applies_to:
+      content_match:
+        - "defstruct"
+        - "__struct__"
+        - "%__MODULE__{"
