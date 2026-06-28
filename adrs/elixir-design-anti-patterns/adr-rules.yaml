@@ -1,0 +1,74 @@
+domain: elixir-design-anti-patterns
+title: "Elixir Design Anti-Patterns"
+description: "ADRs codifying the official Elixir design-related anti-patterns: return-type consistency, boolean and primitive obsession, exceptions for control flow, unrelated multi-clause functions, and library configuration."
+
+adrs:
+  - id: 1
+    file: adr-001-alternative-return-types.md
+    title: "Alternative return types"
+    description: "When an option would change a function's return type, split each return shape into its own named function instead of selecting the type by option."
+    applies_to:
+      content_match:
+        - "options \\\\ []"
+        - "when is_list(options)"
+        - "Keyword.get(options,"
+        - "keyword()) ::"
+
+  - id: 2
+    file: adr-002-boolean-obsession.md
+    title: "Boolean obsession"
+    description: "When two or more booleans encode overlapping or mutually exclusive states, or a lone boolean flag is likely to gain a third state, replace them with a single atom field."
+    applies_to:
+      content_match:
+        - "admin: true"
+        - "editor: true"
+        - "approved: true"
+        - "cond do"
+        - "options[:admin]"
+        - "is_admin"
+
+  - id: 3
+    file: adr-003-exceptions-for-control-flow.md
+    title: "Exceptions for control-flow"
+    description: "When handling an expected, recoverable failure, match an {:ok, _} | {:error, _} tuple with case instead of wrapping a raising call in try/rescue."
+    applies_to:
+      content_match:
+        - "try do"
+        - "rescue"
+        - "raise"
+        - "File.read!"
+        - "Exception.message"
+
+  - id: 4
+    file: adr-004-primitive-obsession.md
+    title: "Primitive obsession"
+    description: "When a string, integer, or float is repeatedly parsed or validated to stand in for a structured domain value, model it with a struct parsed once at the boundary, and use integer minor units or Decimal for money."
+    applies_to:
+      content_match:
+        - "when is_binary("
+        - "is_float("
+        - "Float.round"
+
+  - id: 5
+    file: adr-005-unrelated-multi-clause-function.md
+    title: "Unrelated multi-clause function"
+    description: "When clauses of one function handle unrelated inputs and the @doc narrates each case with \"if given X\" conditionals, split them into separately named functions."
+    applies_to:
+      content_match:
+        - "If given a"
+        - "If it is a"
+        - "def update(%Product{"
+        - "def update(%Animal{"
+        - "Product.t() | Animal.t()"
+
+  - id: 6
+    file: adr-006-using-application-configuration-for-libraries.md
+    title: "Using application configuration for libraries"
+    description: "When a library reads its own settings from Application.get_env, fetch_env!, or compile_env, move the configuration to function arguments, consumer-owned child specs, or required options on `use`."
+    applies_to:
+      content_match:
+        - "Application.fetch_env!"
+        - "Application.get_env"
+        - "Application.compile_env"
+        - "use Application"
+        - "config :"

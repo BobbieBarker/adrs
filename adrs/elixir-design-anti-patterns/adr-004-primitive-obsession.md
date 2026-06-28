@@ -1,0 +1,95 @@
+---
+type: adr
+id: 4
+title: "Primitive obsession"
+status: accepted
+date: 2026-06-28
+tags: [elixir, anti-pattern, design, data-modeling, structs]
+description: "Carrying structured domain values (addresses, money) in bare strings or floats forces every consumer to re-parse and re-validate, because primitive guards like is_binary/1 match any value of the type. Parse once at the boundary into a struct, and model money as integer minor units or Decimal since IEEE 754 floats cannot represent decimal fractions exactly."
+---
+# ADR-004: Primitive obsession
+
+## Context
+
+Primitive obsession is the use of Elixir's basic types (integer, float, binary) to carry structured domain information that a composite type (tuple, map, or struct) would represent directly. An address flattened into a single string, or money held as a float, is the typical shape.
+
+A primitive carries no shape. The guards that test it (`is_binary/1`, `is_float/1`) match every value of that type, so the pattern matcher cannot separate a valid address from arbitrary text, or a currency amount from any other float. Validity is therefore unenforceable at the boundary and gets re-derived inside every consumer: each function that needs a field re-parses the string. The repeated extraction is both a correctness hazard (every call site can parse differently) and dead work.
+
+Holding money in a float is the same mistake: a float is the wrong representation for a value that must be exact.
+
+## Decision
+
+### Rule 1: Model structured values with a struct, parsed once at the boundary
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Address do
+  defstruct [:street, :city, :state, :postal_code, :country]
+end
+
+defmodule MyApp do
+  def parse(address) when is_binary(address) do
+    # Returns %MyApp.Address{}
+  end
+
+  def extract_postal_code(%MyApp.Address{} = address) do
+    address.postal_code
+  end
+
+  def fill_in_country(%MyApp.Address{} = address) do
+    # Fill in missing country...
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp do
+  def extract_postal_code(address) when is_binary(address) do
+    # Re-parse the string to find the postal code...
+  end
+
+  def fill_in_country(address) when is_binary(address) do
+    # Re-parse the string to find the country...
+  end
+end
+```
+
+**Why:** `is_binary(address)` matches every binary, so the guard cannot tell a real address from arbitrary text, and each function must re-parse the string to reach a field. Parsing once into `%MyApp.Address{}` moves extraction to a single place: downstream functions pattern-match the struct, so a wrong shape fails the function clause immediately instead of parsing garbage. A struct also fixes its key set at compile time, so `address.postal_code` and `%MyApp.Address{postal_code: code}` are checked against the definition. A misspelled field is a compile error, not the silent `nil` a free-form map returns from `Map.get/2`.
+
+### Rule 2: Model money and currency with exact types, not floats
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Money do
+  defstruct [:cents, :currency]
+
+  def add_tax(%__MODULE__{cents: cents} = money, rate) do
+    %{money | cents: round(cents * rate)}
+  end
+end
+
+MyApp.Money.add_tax(%MyApp.Money{cents: 1000, currency: :usd}, 1.0825)
+```
+
+**Wrong:**
+
+```elixir
+def add_tax(price, rate) when is_float(price) do
+  price * rate
+end
+
+add_tax(10.0, 1.0825)
+```
+
+**Why:** A `float` is an IEEE 754 double: it stores values in base 2, and decimal fractions like 0.1 and 0.2 have no exact binary representation, so `0.1 + 0.2` evaluates to `0.30000000000000004` and the error accumulates across operations. Holding the amount as an integer count of the smallest unit (cents), or as a `Decimal`, carries the value exactly; rounding happens explicitly and once. Pairing the amount with its `:currency` in a struct also prevents silently adding two different currencies, which a bare number permits.
+
+## Consequences
+
+- Parsing and validation happen once at the boundary. Downstream functions receive a typed struct and fail fast on the wrong shape via the function clause, instead of `is_binary/1` matching any binary.
+- Field access is by key, checked against the struct definition, instead of re-extracting from a string on every call.
+- Money arithmetic is exact: integer minor units or `Decimal` carry no representation error, and currency travels with the amount.
+- The boolean-valued instance of this pattern (a bare `true`/`false` standing in for a domain state) is covered separately in ADR-002.

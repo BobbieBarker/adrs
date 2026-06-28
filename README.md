@@ -1,12 +1,21 @@
 # adrs
 
+Architecture Decision Records, packaged as agent context. Each ADR is a single rule with a Wrong example, a Correct example, and a Why paragraph that names the mechanism behind the difference. Written for engineers and shaped for LLMs to consume: the format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review code.
+
+The rules are grouped into domains. Each domain is a self-contained set with its own pre-rendered bundles under `dist/<domain>/`; adopt one or several.
+
+## Domains
+
+| Domain | Covers | ADRs |
+|---|---|---|
+| [`elixir-otp`](adrs/elixir-otp) | OTP, GenServer, supervision, BEAM scheduling, interprocess data, stateful-process testing | 10 |
+| [`elixir-code-anti-patterns`](adrs/elixir-code-anti-patterns) | The official Elixir code anti-patterns | 10 |
+| [`elixir-design-anti-patterns`](adrs/elixir-design-anti-patterns) | The official Elixir design anti-patterns | 6 |
+| [`elixir-macro-anti-patterns`](adrs/elixir-macro-anti-patterns) | The official Elixir meta-programming anti-patterns | 5 |
+
+### elixir-otp
+
 Working with GenServer and the BEAM rewards a precise mental model of how they actually behave. The wrong model produces the same predictable production failures: a callback blocks the processing loop, a process hoards state and pays for it in GC pauses, a `cast` pipeline grows an unbounded mailbox, `terminate/2` cleanup is silently skipped on a brutal kill. Humans build the wrong model. LLMs build the wrong model, often more confidently.
-
-Eight ADRs on the rules that follow from a correct understanding. Each is a single rule with a Wrong example, a Correct example, and a Why paragraph that names the BEAM mechanism behind the difference.
-
-Written for engineers and shaped for LLMs to consume. The format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review GenServer code.
-
-## The ADRs
 
 - [ADR-001: Reach for Simpler Primitives Before GenServer](adrs/elixir-otp/adr-001-reach-for-simpler-primitives-before-genserver.md)
 - [ADR-002: Separate GenServer Business Logic From Server Mechanics](adrs/elixir-otp/adr-002-separate-business-logic-from-server-mechanics.md)
@@ -16,10 +25,50 @@ Written for engineers and shaped for LLMs to consume. The format reads cleanly a
 - [ADR-006: Use GenStage for Producer-Consumer Pipelines](adrs/elixir-otp/adr-006-use-genstage-for-producer-consumer-pipelines.md)
 - [ADR-007: Design GenServers for Test Isolation](adrs/elixir-otp/adr-007-design-genservers-for-test-isolation.md)
 - [ADR-008: Graceful Shutdown Requires trap_exit and a Realistic :shutdown](adrs/elixir-otp/adr-008-graceful-shutdown-requires-trap-exit-and-realistic-shutdown.md)
+- [ADR-009: Send Minimal Data Between Processes](adrs/elixir-otp/adr-009-send-minimal-data-between-processes.md)
+- [ADR-010: Supervise Every Long-Lived Process](adrs/elixir-otp/adr-010-supervise-long-lived-processes.md)
+
+### elixir-code-anti-patterns
+
+The code-related anti-patterns from the official Elixir documentation, each codified as one rule: the mistake as the Wrong example, the refactoring as the Correct example, and the mechanism in the Why.
+
+- [ADR-001: Comments overuse](adrs/elixir-code-anti-patterns/adr-001-comments-overuse.md)
+- [ADR-002: Complex `else` clauses in `with`](adrs/elixir-code-anti-patterns/adr-002-complex-else-clauses-in-with.md)
+- [ADR-003: Complex extractions in clauses](adrs/elixir-code-anti-patterns/adr-003-complex-extractions-in-clauses.md)
+- [ADR-004: Dynamic atom creation](adrs/elixir-code-anti-patterns/adr-004-dynamic-atom-creation.md)
+- [ADR-005: Long parameter list](adrs/elixir-code-anti-patterns/adr-005-long-parameter-list.md)
+- [ADR-006: Namespace trespassing](adrs/elixir-code-anti-patterns/adr-006-namespace-trespassing.md)
+- [ADR-007: Non-assertive map access](adrs/elixir-code-anti-patterns/adr-007-non-assertive-map-access.md)
+- [ADR-008: Non-assertive pattern matching](adrs/elixir-code-anti-patterns/adr-008-non-assertive-pattern-matching.md)
+- [ADR-009: Non-assertive truthiness](adrs/elixir-code-anti-patterns/adr-009-non-assertive-truthiness.md)
+- [ADR-010: Structs with 32 fields or more](adrs/elixir-code-anti-patterns/adr-010-structs-with-32-fields-or-more.md)
+
+### elixir-design-anti-patterns
+
+The design-related anti-patterns from the official Elixir documentation: return-type consistency, boolean and primitive obsession, exceptions for control flow, unrelated multi-clause functions, and library configuration.
+
+- [ADR-001: Alternative return types](adrs/elixir-design-anti-patterns/adr-001-alternative-return-types.md)
+- [ADR-002: Boolean obsession](adrs/elixir-design-anti-patterns/adr-002-boolean-obsession.md)
+- [ADR-003: Exceptions for control-flow](adrs/elixir-design-anti-patterns/adr-003-exceptions-for-control-flow.md)
+- [ADR-004: Primitive obsession](adrs/elixir-design-anti-patterns/adr-004-primitive-obsession.md)
+- [ADR-005: Unrelated multi-clause function](adrs/elixir-design-anti-patterns/adr-005-unrelated-multi-clause-function.md)
+- [ADR-006: Using application configuration for libraries](adrs/elixir-design-anti-patterns/adr-006-using-application-configuration-for-libraries.md)
+
+### elixir-macro-anti-patterns
+
+The meta-programming anti-patterns from the official Elixir documentation: compile-time dependencies (tracked and untracked), code-generation size, unnecessary macros, and `use` versus `import`.
+
+- [ADR-001: Compile-time dependencies](adrs/elixir-macro-anti-patterns/adr-001-compile-time-dependencies.md)
+- [ADR-002: Large code generation](adrs/elixir-macro-anti-patterns/adr-002-large-code-generation.md)
+- [ADR-003: Unnecessary macros](adrs/elixir-macro-anti-patterns/adr-003-unnecessary-macros.md)
+- [ADR-004: `use` instead of `import`](adrs/elixir-macro-anti-patterns/adr-004-use-instead-of-import.md)
+- [ADR-005: Untracked compile-time dependencies](adrs/elixir-macro-anti-patterns/adr-005-untracked-compile-time-dependencies.md)
+
+> The anti-pattern domains codify the patterns documented at <https://hexdocs.pm/elixir/what-anti-patterns.html>. The process anti-patterns are not a separate domain because `elixir-otp` already covers that ground: *Code organization by process* and *Scattered process interfaces* fall under ADR-001 and ADR-002, and *Sending unnecessary data* and *Unsupervised processes* are ADR-009 and ADR-010. Nothing is restated across domains.
 
 ## Integration
 
-Pre-rendered bundles for each tool live in `dist/elixir-otp/`. Pick the one for your harness.
+Pre-rendered bundles live in `dist/<domain>/`, one set per domain. Pick your domain (the examples below use `elixir-otp`; substitute any domain from the table above) and your harness.
 
 ### Cursor
 
@@ -65,13 +114,13 @@ read:
   - /path/to/adrs/dist/elixir-otp/bundle.md
 ```
 
-`bundle.md` is the eight ADRs concatenated into one file. It pays full token cost on every turn and gets cached if prompt caching is enabled. Use the harness-specific bundles above when you can; fall back to this when you can't.
+`bundle.md` is the domain's ADRs concatenated into one file. It pays full token cost on every turn and gets cached if prompt caching is enabled. Use the harness-specific bundles above when you can; fall back to this when you can't.
 
 References: <https://aider.chat/docs/usage/conventions.html>, <https://aider.chat/docs/config/aider_conf.html>
 
 ### Custom harness or your own retriever (RAG)
 
-`dist/elixir-otp/adrs.jsonl` is one ADR per row, with `id`, `domain`, `title`, `description`, `tags`, `applies_to`, and `body`. Embed the `body` field with the model of your choice; store the rest as metadata. The `applies_to` patterns are advisory; your retriever decides what to do with them.
+`dist/<domain>/adrs.jsonl` is one ADR per row, with `id`, `domain`, `title`, `description`, `tags`, `applies_to`, and `body`. Embed the `body` field with the model of your choice; store the rest as metadata. The `applies_to` patterns are advisory; your retriever decides what to do with them.
 
 The `applies_to` shape (`paths` globs and `content_match` substrings) is the same data used to generate the harness-specific bundles, so a custom retriever can match those bundles' behavior by consuming this manifest directly.
 
@@ -82,11 +131,11 @@ The ADRs use vault-conformant frontmatter (`type: adr`, `id`, `title`, `status`,
 ## Repo layout
 
 ```
-adrs/elixir-otp/
+adrs/<domain>/
 ├── adr-rules.yaml          # path/content patterns per ADR
 └── adr-NNN-*.md            # one ADR per file
 
-dist/elixir-otp/            # generated; do not edit by hand
+dist/<domain>/              # generated; do not edit by hand
 ├── cursor/                 # Cursor .mdc rules
 ├── claude-code/            # CLAUDE.md + .claude/rules/
 ├── adrs.jsonl              # one ADR per row
@@ -96,7 +145,7 @@ tools/
 └── build_dist.exs          # regenerates dist/
 ```
 
-Run `elixir tools/build_dist.exs` after editing the source ADRs or manifest. Requires Elixir 1.12 or later (uses `Mix.install`). CI blocks PRs when `dist/` is out of sync with `adrs/`.
+Run `elixir tools/build_dist.exs` after editing the source ADRs or manifests. Requires Elixir 1.12 or later (uses `Mix.install`). CI blocks PRs when `dist/` is out of sync with `adrs/`.
 
 ## License
 

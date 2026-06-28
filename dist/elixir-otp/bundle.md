@@ -1306,3 +1306,187 @@ end
 - Critical data writes happen synchronously, not lazily at shutdown. `terminate/2` handles only the cooperative cleanup it can guarantee.
 - This is compatible with "let it crash." Armstrong's philosophy addresses unexpected mid-operation errors (let the supervisor restart); `terminate/2` addresses expected, cooperative shutdown (drain what you can). Both belong in a mature system.
 
+
+***
+
+---
+type: adr
+id: 9
+title: "Send Minimal Data Between Processes"
+status: accepted
+date: 2026-06-28
+tags: [elixir, anti-pattern, processes, message-passing, performance, memory]
+description: "Every term sent across a BEAM process boundary is deep-copied into the receiver's isolated heap, and a closure copies every variable it captures, not just the field it reads. Send only the fields a process needs, or let it fetch its own data."
+---
+# ADR-009: Send Minimal Data Between Processes
+
+## Context
+
+BEAM processes have isolated heaps (the "share nothing" architecture), which keeps per-process garbage collection independent and fast. The cost of that isolation is that every term sent across a process boundary is fully deep-copied into the receiver's heap. The copy is proportional to the size of the term: an atom, pid, or integer is cheap; a large struct with nested maps, binaries, and lists is CPU and memory intensive. The size of the message, not the number of fields the receiver actually reads, drives the cost.
+
+This copy happens on every interprocess boundary: `send/2`, `GenServer.call/3`, `GenServer.cast/2`, and the initial argument to `GenServer.start_link/3`. It is most visible there. It is more subtle with `spawn/1`, `Task.async/1`, and `Task.async_stream/3`, because the anonymous function handed to them captures every variable it references in the enclosing scope, and all captured variables are copied into the spawned process, including the parts of a captured struct the function never touches.
+
+The anti-pattern is shipping more than the receiver needs. The remedies are to send the minimum, or to not send at all: let the receiver fetch its own data, or share read-mostly data through a non-copying store.
+
+## Decision
+
+### Rule 1: Send only the fields the receiver needs
+
+**Correct:**
+
+```elixir
+GenServer.cast(pid, {:report_ip_address, conn.remote_ip})
+```
+
+**Wrong:**
+
+```elixir
+GenServer.cast(pid, {:report_ip_address, conn})
+```
+
+**Why:** `conn` is a large struct holding the request body, params, headers, and adapter state. Casting the whole struct deep-copies all of it into the server's heap even though the server reads one field. Extracting `conn.remote_ip` at the call site means only a small tuple crosses the boundary. The same applies to `send/2`, `GenServer.call/3`, and the initial data handed to `GenServer.start_link/3`.
+
+### Rule 2: A closure copies every variable it captures, not just the field it reads
+
+**Correct:**
+
+```elixir
+ip_address = conn.remote_ip
+spawn(fn -> log_request_ip(ip_address) end)
+```
+
+**Wrong:**
+
+```elixir
+spawn(fn -> log_request_ip(conn.remote_ip) end)
+```
+
+**Why:** The anonymous function captures `conn` (the variable it names), not `conn.remote_ip`. When the closure is sent to the spawned process, the entire captured `conn` is deep-copied first; the `remote_ip` field is extracted afterward, inside the new process, from the copy. Binding `ip_address = conn.remote_ip` before the closure means the closure captures only the small IP term, so only that crosses the boundary. The same capture rule governs `Task.async/1` and `Task.async_stream/3`, including the `Task.Supervisor` patterns in ADR-001 and the off-loop work in ADR-005.
+
+### Rule 3: Prefer fetching or sharing over sending
+
+**Correct:**
+
+```elixir
+# Send an identifier; the sole consumer loads what it needs on its own heap.
+GenServer.cast(MyApp.Reporter, {:render, report_id})
+
+def handle_cast({:render, report_id}, state) do
+  report = MyApp.Reports.load(report_id)
+  render(report)
+  {:noreply, state}
+end
+```
+
+**Wrong:**
+
+```elixir
+# Caller loads the full record only to ship it to the one process that uses it.
+report = MyApp.Reports.load(report_id)
+GenServer.cast(MyApp.Reporter, {:render, report})
+```
+
+**Why:** If the receiving process is the only consumer, loading the data inside the receiver keeps the large term on a single heap, so it never crosses a process boundary and is never copied. Passing the id moves a small term and defers the load to the one process that needs it. For data that many processes read and that changes infrequently, `:persistent_term` stores one shared copy that readers access without copying; updating a `:persistent_term` triggers a global garbage-collection scan, so it suits read-mostly data only. Both strategies keep large terms out of process state (ADR-003).
+
+## Consequences
+
+- Messages carry identifiers and small scalar fields, not whole structs. Copy cost at each process boundary scales with what the receiver uses, not with what the sender happens to hold.
+- Closures passed to `spawn`, `Task.async`, and `Task.async_stream` capture pre-bound minimal values, so background work does not silently drag a full struct into a new heap.
+- The sole-consumer case fetches its own data; read-mostly shared data lives in `:persistent_term` instead of being copied on every message.
+- Per-process garbage collection stays cheap because each heap holds only the data that process needs.
+
+
+***
+
+---
+type: adr
+id: 10
+title: "Supervise Every Long-Lived Process"
+status: accepted
+date: 2026-06-28
+tags: [elixir, anti-pattern, otp, supervision, processes, fault-tolerance]
+description: "A process started outside a supervision tree has no restart strategy, no deterministic start or shutdown ordering, and is invisible to observer-based introspection because supervisors are the BEAM's lifecycle owners. Start every long-lived process as a static supervisor child, and every runtime-created one under a DynamicSupervisor."
+---
+# ADR-010: Supervise Every Long-Lived Process
+
+## Context
+
+Spawning a process outside a supervision tree is legal, and for short-lived work it is fine. The problem is the long-lived process started with a bare `spawn`, `spawn_link`, or a hand-rolled `start_link` call buried in application code. Such a process has no lifecycle owner.
+
+A supervisor is the BEAM's lifecycle owner. It starts its children in declared order, links to and monitors each one, applies a restart strategy (`:one_for_one` and friends) when a child exits, and terminates children in reverse start order on shutdown. A process outside the tree gets none of this. A transient crash becomes permanent absence because nothing restarts it. Startup ordering is undefined, so any process that depends on it needs ad-hoc initialization coordination. On application stop, the BEAM tears down the application's supervision tree and waits on each child's `:shutdown`; an orphaned process is not in that tree, so it is not awaited and receives no ordered shutdown signal (the graceful-shutdown contract is ADR-008). It is also invisible to introspection: `:observer` and Phoenix LiveDashboard render the supervision tree, and a PID hanging off nothing does not appear.
+
+The fix is not to forbid spawning. It is to give every process whose lifetime outlives the call that created it a supervisor: a static child for fixed, always-on processes, and a `DynamicSupervisor` for processes created at runtime.
+
+## Decision
+
+### Rule 1: Start fixed processes as static supervisor children
+
+Processes that exist for the life of the application belong in a supervisor's child list, not started from an ad-hoc init function.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    children = [
+      MyApp.Counter,
+      Supervisor.child_spec(
+        {MyApp.Counter, name: :other_counter, initial_value: 15},
+        id: :other_counter
+      )
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: MyApp.Supervisor)
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+def boot_counters do
+  {:ok, _pid} = MyApp.Counter.start_link()
+  {:ok, _pid} = MyApp.Counter.start_link(name: :other_counter, initial_value: 15)
+  :ok
+end
+```
+
+**Why:** In the wrong version the two counters are linked only to whatever process called `boot_counters`. If that caller exits, the linked counters die with it; if it is unlinked, they leak. Either way nothing restarts them after a crash, their start order relative to dependents is undefined, and application shutdown does not wait on them. The child-list version makes the supervisor their owner: deterministic start order, a restart strategy on failure, reverse-order termination so cleanup runs in dependency order, and a node visible to `:observer` and LiveDashboard. Distinct child specs need distinct `:id` values, which is why the second counter is wrapped in `Supervisor.child_spec/2`.
+
+### Rule 2: Start runtime-created processes under a DynamicSupervisor
+
+When the set of processes is not known until runtime (one per session, connection, or job), a `DynamicSupervisor` is the owner. A bare `spawn` is not.
+
+**Correct:**
+
+```elixir
+# In the supervision tree:
+{DynamicSupervisor, name: MyApp.SessionSupervisor, strategy: :one_for_one}
+
+def start_session(session_id, opts) do
+  spec = {MyApp.Session, Keyword.put(opts, :session_id, session_id)}
+  DynamicSupervisor.start_child(MyApp.SessionSupervisor, spec)
+end
+```
+
+**Wrong:**
+
+```elixir
+def start_session(session_id, opts) do
+  spawn(fn -> MyApp.Session.run(session_id, opts) end)
+end
+```
+
+**Why:** The spawned function is owned by nothing. It is not linked into any tree, so the application cannot drain or terminate it on shutdown, a crash leaves no trace and no restart, and it never appears in supervision-tree introspection. `DynamicSupervisor.start_child/2` attaches the runtime process to the tree, so each session inherits the same shutdown ordering, restart strategy, and observability as a static child while still being created on demand. When the process lifetime instead matches a single unit of work, reach for `Task.Supervisor` rather than `DynamicSupervisor` (see ADR-001 and ADR-005).
+
+## Consequences
+
+- Every long-lived process has an owner that restarts it on failure per a declared strategy, rather than vanishing on the first crash.
+- Startup order is deterministic and shutdown runs in reverse order, so dependent processes initialize and drain in a defined sequence.
+- Application shutdown awaits every process and delivers an ordered `:shutdown` signal, making `terminate/2` cleanup reliable (ADR-008).
+- The full process topology is introspectable through `:observer` and LiveDashboard, because everything hangs off the supervision tree.
+- Fixed processes live in a child list; runtime-created ones live under a `DynamicSupervisor`. Bare `spawn`/`start_link` of a long-lived process becomes a code smell.
+

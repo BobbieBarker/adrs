@@ -1,0 +1,63 @@
+domain: elixir-macro-anti-patterns
+title: "Elixir Macro Anti-Patterns"
+description: "ADRs codifying the official Elixir meta-programming anti-patterns: compile-time dependencies (tracked and untracked), code-generation size, unnecessary macros, and use versus import."
+
+adrs:
+  - id: 1
+    file: adr-001-compile-time-dependencies.md
+    title: "Compile-time dependencies"
+    description: "When a macro stores a module reference passed as an argument for use inside a generated function, expand the literal into that function's context with Macro.expand_literals/2 so it stays a runtime dependency instead of forcing recompilation."
+    applies_to:
+      content_match:
+        - "defmacro"
+        - "unquote(mod)"
+        - "@before_compile"
+        - "Macro.expand_literals"
+        - "Module.register_attribute"
+        - "accumulate: true"
+
+  - id: 2
+    file: adr-002-large-code-generation.md
+    title: "Large code generation"
+    description: "When a macro's quote block contains substantial logic and is invoked many times, move the body into a regular function the macro calls so it compiles once instead of per call site."
+    applies_to:
+      content_match:
+        - "defmacro"
+        - "quote do"
+        - "unquote("
+        - "Module.put_attribute"
+        - "@store_route_for_compilation"
+
+  - id: 3
+    file: adr-003-unnecessary-macros.md
+    title: "Unnecessary macros"
+    description: "When a defmacro only computes over its already-evaluated arguments, replace it with a named function to drop the require dependency and inline expansion."
+    applies_to:
+      content_match:
+        - "defmacro"
+        - "quote do"
+        - "unquote("
+        - "require "
+
+  - id: 4
+    file: adr-004-use-instead-of-import.md
+    title: "`use` instead of `import`"
+    description: "When a library exposes a `__using__/1` that only imports or aliases other modules, replace `use` with explicit `import`/`alias` at the call site."
+    applies_to:
+      content_match:
+        - "defmacro __using__"
+        - "__using__(_opts)"
+        - "__using__(opts)"
+        - "use MyApp"
+        - "quote do"
+
+  - id: 5
+    file: adr-005-untracked-compile-time-dependencies.md
+    title: "Untracked compile-time dependencies"
+    description: "When dispatching to modules whose names are built dynamically, write them as literal aliases or construct them inside a macro so the compiler tracks the compile-time dependency."
+    applies_to:
+      content_match:
+        - "Module.concat"
+        - "Module.concat("
+        - "Module.safe_concat"
+        - ":\"Elixir."

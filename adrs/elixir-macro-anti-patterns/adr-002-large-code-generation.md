@@ -1,0 +1,80 @@
+---
+type: adr
+id: 2
+title: "Large code generation"
+status: accepted
+date: 2026-06-28
+tags: [elixir, anti-pattern, macros, metaprogramming, compile-time, code-generation]
+description: "A macro injects its quoted body into the caller at every invocation, and the compiler compiles each copy, so a large quoted body multiplied across many call sites slows compilation and bloats the .beam file. Quote only a call to a regular function and put the bulk logic in that function."
+---
+# ADR-002: Large code generation
+
+## Context
+
+A macro runs at compile time and injects its quoted AST into the calling module at every invocation site. The compiler then expands and compiles that injected code once per call site. When the quoted body is large and the macro is called many times, the cost multiplies: a web router with hundreds of `get/2` calls produces hundreds of independent copies of the macro body, each expanded and compiled into the host module's bytecode.
+
+Two concrete costs follow. Compilation slows, because the compiler walks and compiles every copy of the generated code rather than one shared definition. The compiled artifact grows, because each expansion is duplicated into the `.beam` file; module size scales with the number of call sites times the size of the quoted body.
+
+The fix is to keep the quoted body small. A macro only needs to generate code for the work that genuinely requires compile-time context (capturing `__MODULE__`, the literal arguments, or an attribute target). Everything else (validation, transformation, side effects) can run in an ordinary function the macro calls, so that logic is compiled once and dispatched to.
+
+## Decision
+
+### Rule 1: Quote a function call, not the function body
+
+The macro's `quote` block should expand to a single call into a regular function, passing the unquoted arguments. Put the bulk of the work in that function.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Router do
+  defmacro get(route, handler) do
+    quote do
+      MyApp.Router.__define__(__MODULE__, unquote(route), unquote(handler))
+    end
+  end
+
+  def __define__(module, route, handler) do
+    if not is_binary(route) do
+      raise ArgumentError, "route must be a binary"
+    end
+
+    if not is_atom(handler) do
+      raise ArgumentError, "handler must be a module"
+    end
+
+    Module.put_attribute(module, :store_route_for_compilation, {route, handler})
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Router do
+  defmacro get(route, handler) do
+    quote do
+      route = unquote(route)
+      handler = unquote(handler)
+
+      if not is_binary(route) do
+        raise ArgumentError, "route must be a binary"
+      end
+
+      if not is_atom(handler) do
+        raise ArgumentError, "handler must be a module"
+      end
+
+      @store_route_for_compilation {route, handler}
+    end
+  end
+end
+```
+
+**Why:** In the wrong version the entire validation-and-store body is the quoted AST, so it is inlined into the host module at every `get/2` call. A router with hundreds of routes expands and compiles hundreds of full copies of that body; compilation time and the resulting `.beam` size grow with the call count. In the correct version the `quote` injects one small call. The validation and `Module.put_attribute/3` logic is compiled exactly once as `__define__/3`, and each call site costs a single fixed-size dispatch regardless of how much work the function does. The macro is still justified here because it needs compile-time context (`__MODULE__` and the literal route); if a construct needs none of that, it should be a plain function rather than a macro (see ADR-003).
+
+## Consequences
+
+- Each call site expands to a fixed-size function call, so macro expansion cost stays flat as the number of invocations grows.
+- The bulk logic compiles once into one named function; host-module bytecode and `.beam` size no longer scale with call count.
+- Compilation time scales with call sites times a small stub instead of call sites times the full body.
+- The extracted function is callable and testable on its own, unlike logic buried in quoted AST.
