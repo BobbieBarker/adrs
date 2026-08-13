@@ -1,0 +1,396 @@
+---
+type: adr
+id: 12
+title: The Shape of GenServer State
+status: accepted
+date: 2026-08-02
+updated: 2026-08-09
+tags: [elixir, otp, genserver, state, structs, types, composition]
+description: "A GenServer's state is a struct in its own module with a fully enumerated @type t, @enforce_keys, and one construction function, never a bare map and never a @typep map type. Configuration, injected collaborators, and changing concerns have distinct homes, and each concern's module owns its transitions. The state struct is an architectural boundary; no accessor exists so a caller or test can read live fields."
+---
+
+# ADR-012: The Shape of GenServer State
+
+## Context
+
+Three ADRs already govern parts of a GenServer's state, but none governs its shape. ADR-003 sets how much state a process carries and where bulk data goes instead. ADR-007 sets how opts arrive and how they are validated. `elixir-conventions` ADR-004 sets the discipline for domain entities: a fully enumerated `@type t`, exact `@enforce_keys` semantics, and opt-in JSON encoding. Process state falls through the gap between them. It is not a domain entity that callers hand around; it is the private accumulation a process coordinates through, so an agent applying `elixir-conventions` ADR-004 to a schema module reasonably leaves `init/1`'s map literal alone.
+
+What lands in that gap is a map. `init/1` returns `%{name: name, cache: cache, pending: %{}}`, one callback adds a task reference with `Map.put/3`, another adds a generation counter, and the shape of the state is whatever the union of the callbacks happens to produce. Nothing rejects the growth, because nothing declares what the state is.
+
+The reason nothing rejects it is mechanical rather than cultural. The state value crosses the OTP callback boundary on every message: `init/1` returns it, `gen_server` holds it, and a callback receives it back as an ordinary argument. `defstruct` declares the allowed fields. A `%State{} = state` callback or transition head gives the compiler a known closed struct shape at that entry point, and `%{state | field: value}` refuses to introduce a field the struct does not declare. A fully enumerated `@type` and the corresponding `@spec` document field-value types for tools and Dialyzer; they do not create those compiler checks. A bare map and `Map.put/3` establish no such boundary: `Map.put(state, :sweep_ref, ref)` can add the misspelled key, the later read of `state.sweep_timer` still finds `nil`, and the timer is never canceled.
+
+## Decision
+
+A GenServer's state is a declared struct, grouped by write path, partitioned by concern, and an architectural dependency boundary owned by its subsystem.
+
+### Rule 1: Declare process state as a struct with `@enforce_keys` and one construction function
+
+The state a GenServer carries lives in its own module under the subsystem namespace, with a fully enumerated `@type t`, `@enforce_keys` listing values callers must supply, and one named function that builds it. `State.new/1` is the only code that directly constructs `%State{}`. `init/1` and direct transition tests call that constructor, and every whole-state transition matches `%State{} = state` and writes with `%{state | field: value}`. A bare map is not the state type, and neither is a `@typep` map type declared inside `Impl`.
+
+This first Correct snippet is a staged excerpt that isolates the construction and shape rule. Rule 3 supplies the complete State and concern composition.
+
+**Correct (staged excerpt):**
+
+```elixir
+# lib/my_app/inventory/state.ex
+defmodule MyApp.Inventory.State do
+  alias MyApp.Inventory.Config
+
+  @enforce_keys [:name, :config]
+
+  defstruct [:name, :config, pending: %{}]
+
+  @type t :: %__MODULE__{
+          name: GenServer.name() | nil,
+          config: Config.t(),
+          pending: %{optional(pos_integer()) => pos_integer()}
+        }
+
+  @spec new(map()) :: t()
+  def new(%{name: name} = opts) do
+    config = Config.from(opts)
+    :ok = validate_config(config)
+
+    %__MODULE__{name: name, config: config}
+  end
+
+  defp validate_config(%Config{sweep_interval_ms: interval_ms})
+       when is_integer(interval_ms) and interval_ms > 0,
+       do: :ok
+
+  defp validate_config(config),
+    do: raise(ArgumentError, "invalid inventory configuration: #{inspect(config)}")
+end
+```
+
+```elixir
+# lib/my_app/inventory/impl.ex
+@spec track(State.t(), pos_integer(), pos_integer()) :: State.t()
+def track(%State{} = state, operation_id, quantity) do
+  %{state | pending: Map.put(state.pending, operation_id, quantity)}
+end
+```
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory/impl.ex
+defmodule MyApp.Inventory.Impl do
+  @typep server_state :: %{name: GenServer.name(), pending: map(), sweep_timer: reference() | nil}
+
+  @spec initial_state(map()) :: server_state()
+  def initial_state(opts) do
+    %{name: opts.name, sweep_interval_ms: opts.sweep_interval_ms, pending: %{}, sweep_timer: nil}
+  end
+
+  def arm_sweep(state) do
+    Map.put(state, :sweep_ref, Process.send_after(self(), :sweep, state.sweep_interval_ms))
+  end
+
+  def cancel_sweep(%{sweep_timer: nil} = state), do: state
+
+  def cancel_sweep(state) do
+    Process.cancel_timer(state.sweep_timer)
+    Map.put(state, :sweep_timer, nil)
+  end
+end
+```
+
+**Why:** The mechanisms fire at different places and must not be conflated. `defstruct` declares the allowed fields. `@enforce_keys` requires key presence when code builds a literal or calls `struct!/2`, but it permits an explicitly supplied `nil`, validates no field type or invariant, does not govern updates, and is bypassed by `struct/2`. `State.new/1` therefore validates values and composite invariants before it constructs the state. A `%State{} = state` transition head gives the compiler the known struct shape, and `%{state | sweep_ref: ref}` cannot introduce an undeclared key: it reports `expected a map with key :sweep_ref in map update syntax`. The head is what buys that. Where a value's type is not established by the head, the struct-tagged form `%State{state | field: value}` asserts it at the update site instead, reporting `a struct for MyApp.Inventory.State is expected on struct update`. Transitions here take the head, so they use the shorter form. The Wrong version establishes no struct boundary, and `Map.put/3` inserts the misspelled key rather than rejecting it.
+
+The fully enumerated `@type` and `@spec` document field types and give Dialyzer information it can use to find provable inconsistencies; they neither enforce values at runtime nor guarantee every misuse is reported. A private map alias is additionally the wrong ownership boundary: sibling modules cannot name another module's `@typep` in their specs. Dialyzer may still infer information across module calls, but a private alias does not give the subsystem one declared State type that every callback and transition can name.
+
+### Rule 2: Group configuration, injected collaborators, and working state separately
+
+The state's values have different write paths. Configuration is derived once from the opts validated at `start_link`. Injected collaborators are the modules and pids the process calls out to, supplied per ADR-007 Rule 3. Changing state is partitioned by the concern that owns each transition. Configuration gets one `config` field, injected collaborators get one `deps` field, and changing state gets one field per concern. Stable process identity such as `name` may remain explicit top-level metadata. `Config` and `Deps` are structs with fully enumerated `@type t` declarations and constructors that read validated opts. ADR-003 Rule 2 makes the argument for separating working state from configuration; this rule extends that separation to collaborators and concern ownership.
+
+**Correct (staged grouping excerpt):**
+
+```elixir
+# lib/my_app/inventory/state.ex
+alias MyApp.Inventory.{Config, Deps, Recounts, Reservations, Sweeper}
+
+@enforce_keys [:name, :config, :deps, :reservations, :recounts, :sweeper]
+
+defstruct [:name, :config, :deps, :reservations, :recounts, :sweeper]
+
+@type t :: %__MODULE__{
+        name: GenServer.name() | nil,
+        config: Config.t(),
+        deps: Deps.t(),
+        reservations: Reservations.t(),
+        recounts: Recounts.t(),
+        sweeper: Sweeper.t()
+      }
+```
+
+`State.new/1`, including initialization of these concerns, appears in the complete Rule 3 example. No caller fills this staged declaration with a State literal.
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory/impl.ex, over a State whose fields all sit at the top level:
+# defstruct [:name, :cache, :clock, :window_ms, pending: %{}, sweep_timer: nil]
+@spec back_off(State.t()) :: State.t()
+def back_off(%State{} = state) do
+  %{state | window_ms: state.window_ms * 2}
+end
+```
+
+**Why:** A GenServer's state is the accumulator its receive loop threads from one callback to the next. Flat, `%{state | window_ms: state.window_ms * 2}` and `%{state | pending: pending}` are both updates against the same top-level struct, so the declared field list alone cannot express their different ownership. The doubled configuration then applies to every later message and disappears on a crash when `init/1` rebuilds the original opts. Grouping makes those write paths explicit: `Config` owns construction-time settings, `Deps` owns injected collaborators, and each changing concern owns its own transitions. `State.new/1` rebuilds configuration and dependencies from opts and creates fresh concern values, making the restart boundary readable from the constructor rather than recoverable only by tracing callback assignments.
+
+### Rule 3: Compose per-concern sub-structs and let each concern's module own its transitions
+
+When a process coordinates more than one concern (a set of reservations, a sweep timer, a table of monitored tasks, a rate-limit window), each concern gets its own struct module with a fully enumerated `@type t`, its own constructor, and its own transition functions. The state holds one field per concern. Every concern transition matches `%__MODULE__{} = concern`; it receives that concern rather than the whole State. An Impl function matches `%State{} = state`, calls the concerns touched by one message, and recombines their results. ADR-003 defines the bounded `Recounts` concern used here; this rule does not duplicate its API.
+
+**Correct:**
+
+```elixir
+# lib/my_app/inventory/reservations.ex
+defmodule MyApp.Inventory.Reservations do
+  alias MyApp.Inventory.Reservation
+
+  @enforce_keys [:limit]
+  defstruct [:limit, entries: %{}, next_id: 1]
+
+  @type id :: pos_integer()
+  @type t :: %__MODULE__{
+          limit: pos_integer(),
+          entries: %{optional(id()) => Reservation.t()},
+          next_id: id()
+        }
+
+  @spec new(pos_integer()) :: t()
+  def new(limit) when is_integer(limit) and limit > 0, do: %__MODULE__{limit: limit}
+
+  @spec ensure_admission(t()) :: ErrorMessage.t_ok_res()
+  def ensure_admission(%__MODULE__{} = reservations) do
+    if map_size(reservations.entries) < reservations.limit do
+      :ok
+    else
+      {:error,
+       ErrorMessage.service_unavailable("Reservation capacity reached", %{
+         operation: :reserve
+       })}
+    end
+  end
+
+  @spec pending?(t(), id()) :: boolean()
+  def pending?(%__MODULE__{} = reservations, id), do: Map.has_key?(reservations.entries, id)
+
+  @spec take_expired(t(), DateTime.t()) :: {[{id(), Reservation.t()}], t()}
+  def take_expired(%__MODULE__{} = reservations, now) do
+    {expired, live} =
+      Map.split_with(reservations.entries, fn {_id, entry} ->
+        DateTime.before?(entry.expires_at, now)
+      end)
+
+    {Map.to_list(expired), %{reservations | entries: live}}
+  end
+end
+```
+
+```elixir
+# lib/my_app/inventory/sweeper.ex
+defmodule MyApp.Inventory.Sweeper do
+  defstruct timer: nil
+
+  @type t :: %__MODULE__{timer: reference() | nil}
+
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
+
+  @spec rearm(t(), pos_integer()) :: t()
+  def rearm(%__MODULE__{timer: nil} = sweeper, interval_ms) do
+    arm(sweeper, interval_ms)
+  end
+
+  def rearm(%__MODULE__{timer: timer} = sweeper, interval_ms) do
+    _ = Process.cancel_timer(timer)
+    arm(%{sweeper | timer: nil}, interval_ms)
+  end
+
+  defp arm(%__MODULE__{} = sweeper, interval_ms)
+       when is_integer(interval_ms) and interval_ms > 0 do
+    timer = :erlang.start_timer(interval_ms, self(), :sweep)
+    %{sweeper | timer: timer}
+  end
+end
+```
+
+```elixir
+# lib/my_app/inventory/state.ex -- complete definition
+defmodule MyApp.Inventory.State do
+  alias MyApp.Inventory.{Config, Deps, Recounts, Reservations, Sweeper}
+
+  @enforce_keys [:name, :config, :deps, :reservations, :recounts, :sweeper]
+
+  defstruct [:name, :config, :deps, :reservations, :recounts, :sweeper]
+
+  @type t :: %__MODULE__{
+          name: GenServer.name() | nil,
+          config: Config.t(),
+          deps: Deps.t(),
+          reservations: Reservations.t(),
+          recounts: Recounts.t(),
+          sweeper: Sweeper.t()
+        }
+
+  @spec new(map()) :: t()
+  def new(%{name: name} = opts) do
+    config = Config.from(opts)
+    deps = Deps.from(opts)
+    :ok = validate_components(config, deps)
+
+    %__MODULE__{
+      name: name,
+      config: config,
+      deps: deps,
+      reservations: Reservations.new(config.max_reservations),
+      recounts: Recounts.new(config.max_recounts),
+      sweeper: Sweeper.new()
+    }
+  end
+
+  defp validate_components(
+         %Config{
+           sweep_interval_ms: interval_ms,
+           max_reservations: max_reservations,
+           max_recounts: max_recounts
+         },
+         %Deps{}
+       )
+       when is_integer(interval_ms) and interval_ms > 0 and
+              is_integer(max_reservations) and max_reservations > 0 and
+              is_integer(max_recounts) and max_recounts > 0,
+       do: :ok
+
+  defp validate_components(_config, _deps),
+    do: raise(ArgumentError, "invalid inventory state configuration or dependencies")
+end
+```
+
+```elixir
+# lib/my_app/inventory/impl.ex
+alias MyApp.Inventory.{Reservation, Reservations, State, Stock, Sweeper}
+
+@spec arm_sweep(State.t()) :: State.t()
+def arm_sweep(%State{} = state) do
+  sweeper = Sweeper.rearm(state.sweeper, state.config.sweep_interval_ms)
+  %{state | sweeper: sweeper}
+end
+
+@spec sweep(State.t(), reference(), DateTime.t()) :: {[Reservations.id()], State.t()}
+def sweep(
+      %State{sweeper: %Sweeper{timer: timer_ref}} = state,
+      timer_ref,
+      now
+    ) do
+  {expired, reservations} = Reservations.take_expired(state.reservations, now)
+
+  Enum.each(expired, fn {_id, %Reservation{sku: sku, quantity: quantity}} ->
+    Stock.restock(state.deps.stock_table, sku, quantity)
+  end)
+
+  sweeper = Sweeper.rearm(state.sweeper, state.config.sweep_interval_ms)
+  expired_ids = Enum.map(expired, &elem(&1, 0))
+
+  {expired_ids, %{state | reservations: reservations, sweeper: sweeper}}
+end
+
+def sweep(%State{} = state, _stale_timer_ref, _now), do: {[], state}
+```
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory/impl.ex, over a State that holds every concern flat:
+# defstruct [:name, :config, :deps, entries: %{}, next_id: 1, sweep_timer: nil]
+@spec sweep(State.t(), DateTime.t()) :: {[pos_integer()], State.t()}
+def sweep(%State{} = state, now) do
+  {expired, live} =
+    Map.split_with(state.entries, fn {_id, entry} ->
+      DateTime.before?(entry.expires_at, now)
+    end)
+
+  Process.cancel_timer(state.sweep_timer)
+  timer = Process.send_after(self(), :sweep, state.config.sweep_interval_ms)
+
+  {Map.keys(expired), %{state | entries: live, sweep_timer: timer}}
+end
+```
+
+**Why:** Partitioning changes what struct patterns and inferred calls let the compiler reject. `Reservations.take_expired/2` receives `%Reservations{}`, so `%{reservations | sweep_timer: nil}` names a field that concern does not own. Passing `%State{}` where the function expects `%Reservations{}` is likewise an incompatible inferred call. A flat State declares every field on the same struct, so both concerns remain mechanically available to every whole-state transition even when its `@type t` is complete. Typespecs document the partition, but the struct heads and the calls between them establish the code boundary.
+
+The timer reference is also the sweep generation. `State.new/1` constructs an unarmed `Sweeper`; the server's bounded `handle_continue/2` calls `Impl.arm_sweep/1` inside the owning process, as shown in ADR-005 Rule 1. `:erlang.start_timer/3` therefore targets that process and sends `{:timeout, timer_ref, :sweep}` to it. The server passes the reference into `Impl.sweep/3`, and only the reference currently stored in `Sweeper` is accepted. Canceling a timer cannot retract a timeout already delivered to the mailbox, so an older reference must be ignored. `Reservations.take_expired/2` returns each expired reservation with its id, preserving the SKU and quantity `Impl.sweep/3` needs to restock before it recombines State. `Sweeper.rearm/2` owns the changing timer state, while the configured interval remains in `Config` and is passed into the concern when it is rearmed.
+
+### Rule 4: Keep the state struct private to the domain
+
+State privacy is an architectural dependency boundary, not visibility enforced by the Elixir language. The API module, Server, Impl, concern modules, and direct transition tests inside the owning subsystem may name State. Production code outside that subsystem does not depend on it. No public function exists whose purpose is to hand a live State, or one of its fields, to a caller, and no test inspects State read from a running process. Field-level assertions run against Impl transitions over a value built through `State.new/1`; process-level assertions run through the public API. `elixir-conventions` ADR-004 Rule 3's opt-in JSON rule does not reach State, because a serialized process view is a separate public value deliberately built by the API, not the live State exposed wholesale.
+
+**Correct:**
+
+```elixir
+# test/my_app/inventory/impl_test.exs
+test "reserving coordinates stock and reservation concerns" do
+  stock_table = :ets.new(:stock, [:set, :public])
+  :ets.insert(stock_table, {"sku-1", 5})
+
+  state =
+    State.new(%{
+      name: nil,
+      stock_table: stock_table,
+      task_supervisor: self(),
+      sweep_interval_ms: 60_000,
+      max_reservations: 100,
+      max_recounts: 10
+    })
+
+  {{:ok, id}, state} = Impl.reserve(state, "sku-1", 3)
+
+  assert Reservations.pending?(state.reservations, id)
+  assert [{"sku-1", 2}] === :ets.lookup(stock_table, "sku-1")
+end
+```
+
+```elixir
+# test/my_app/inventory/server_test.exs
+test "releasing a reservation returns its stock", %{server: server} do
+  {:ok, id} = Inventory.reserve(server, "sku-1", 3)
+
+  assert :ok = Inventory.release(server, id)
+  assert {:ok, _id} = Inventory.reserve(server, "sku-1", 3)
+end
+```
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory.ex, added so that ServerTest can look at pending reservations
+@spec state(GenServer.name()) :: State.t()
+def state(name), do: GenServer.call(name, :state)
+```
+
+```elixir
+# lib/my_app/checkout.ex, written against that accessor once it exists
+def reserve_if_below_cap(name, sku, qty) do
+  case map_size(Inventory.state(name).reservations.entries) do
+    open when open < 100 -> Inventory.reserve(name, sku, qty)
+    open -> {:error, ErrorMessage.too_many_requests("Reservation cap reached", %{open: open})}
+  end
+end
+```
+
+**Why:** An exported accessor is a contract whether or not it was meant as one. Once `MyApp.Inventory.state/1` exists, production callers can depend on private field names, and the partition Rule 3 bought becomes a cross-subsystem breaking change. The accessor is also unsafe to act on. A GenServer serializes transitions through its mailbox, so `Inventory.state/1` followed by `Inventory.reserve/3` is two messages with an arbitrary number of other messages between them. A read that a decision depends on belongs in the same message as the decision, handled by one callback over the state the process already holds.
+
+Tests do not inspect the result of `:sys.get_state/2` or assert against its fields. ADR-011 permits one narrow use: while the target is executing its normal GenServer receive loop, discarding that result can form an ordering barrier for messages the same test process previously sent to the same live PID. It provides neither global quiescence nor ordering for timer, task, or third-party messages. Impl transitions need no live-state read at all: they take a State built by `State.new/1` and return the next one, so field-level assertions happen where those private fields are already in scope.
+
+## Consequences
+
+- Every GenServer gains a `State` module beside its Server and Impl, with a fully enumerated `@type t`, exact `@enforce_keys`, and one construction function. `init/1` and direct transition tests call `State.new/1`; no other code directly constructs `%State{}`.
+- `defstruct`, `%State{} = state` heads, and `%{state | field: value}` updates keep the known-field boundary in force. Typespecs document field-value types and give Dialyzer information without pretending to enforce them.
+- Configuration and injected collaborators sit behind their own fields, while changing state has one field per concern. `new/1` rebuilds all of them from validated opts and fresh concern constructors, making restart behavior explicit.
+- Concern modules become where transitions live. The Impl function for a message reads as a recombination of per-concern results rather than as a simultaneous rewrite of eight fields.
+- State privacy is an architectural boundary: public APIs return behavior and deliberate projections, never live State or its fields.
+- Tests assert on direct Impl transitions and public API behavior. They never inspect `:sys.get_state/2`; its only permitted use is a discarded, same-sender ordering barrier with the limits stated above.
+- No field-count, nesting-depth, or line-count threshold decides when a flat struct has become a bag, and none is invented here: each of those tracks the problem without identifying it. Rule 3 triggers on the number of concerns the process coordinates, not on the size of the struct. What partitioning produces is checkable even where the decision to partition stays a design judgement: once concerns are split, a function that takes one concern's struct can neither read nor write another's, and that either builds or it does not.

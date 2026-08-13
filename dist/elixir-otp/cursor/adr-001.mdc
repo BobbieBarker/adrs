@@ -7,13 +7,13 @@ alwaysApply: false
 
 ## Context
 
-GenServer is frequently reached for as a default for any stateful or service-shaped behavior. Most of those uses do not require the mailbox serialization that GenServer exists to provide. Reaching for it when a simpler primitive fits creates a single-point bottleneck, introduces a process lifecycle to reason about, and makes the code harder to test.
+GenServer is frequently reached for as a default for any stateful or service-shaped behavior. A GenServer is a long-lived OTP-managed process whose receive loop handles one callback at a time; it serializes its own message handling, not the caller processes. Many uses do not require that serialization, exclusive ownership, or long-lived timer, monitor, admission, rate, or protocol coordination. Reaching for it when a simpler primitive fits creates a single-point bottleneck, introduces a process lifecycle to reason about, and makes the code harder to test.
 
-Simpler OTP primitives (plain modules, `Agent`, `Task`, `Registry`, and ETS) cover most cases where engineers write GenServers.
+Simpler building blocks (plain modules, `Agent`, `Task`, `Registry`, and ETS) cover most cases where engineers write GenServers.
 
 ## Decision
 
-Work the ladder. Use the first primitive that fits.
+Work the ladder. Use the first primitive that fits. The blocks below are reduced to the primitive under discussion: file-path comments carry the three-file layout ADR-002 requires of a GenServer rather than repeating it in full, and every registered name arrives in opts, per ADR-007 Rule 1.
 
 ### Rule 1: Plain module for pure functions
 
@@ -23,6 +23,9 @@ If the behavior holds no state and coordinates nothing, write a module.
 
 ```elixir
 defmodule MyApp.Pricing do
+  alias MyApp.Catalog.Item
+
+  @spec calculate_total([Item.t()], String.t() | nil) :: non_neg_integer()
   def calculate_total(items, discount_code) do
     items
     |> Enum.map(&item_total/1)
@@ -38,11 +41,13 @@ end
 defmodule MyApp.Pricing do
   use GenServer
 
-  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
-  def calculate_total(items, code), do: GenServer.call(__MODULE__, {:calc, items, code})
+  def start_link(%{name: name}), do: GenServer.start_link(__MODULE__, nil, name: name)
+  def calculate_total(server, items, code), do: GenServer.call(server, {:calc, items, code})
 
-  def init(_), do: {:ok, nil}
+  @impl true
+  def init(_opts), do: {:ok, nil}
 
+  @impl true
   def handle_call({:calc, items, code}, _from, state) do
     total = items |> Enum.map(&item_total/1) |> Enum.sum() |> apply_discount(code)
     {:reply, total, state}
@@ -60,14 +65,14 @@ If the operations reduce to reading or replacing a value, use `Agent`.
 
 ```elixir
 defmodule MyApp.FeatureFlags do
-  def start_link(initial),
-    do: Agent.start_link(fn -> initial end, name: __MODULE__)
+  @spec start_link(map()) :: Agent.on_start()
+  def start_link(%{name: name, flags: flags}), do: Agent.start_link(fn -> flags end, name: name)
 
-  def enabled?(flag),
-    do: Agent.get(__MODULE__, &Map.get(&1, flag, false))
+  @spec enabled?(Agent.agent(), atom()) :: boolean()
+  def enabled?(agent, flag), do: Agent.get(agent, &Map.get(&1, flag, false))
 
-  def set(flag, value),
-    do: Agent.update(__MODULE__, &Map.put(&1, flag, value))
+  @spec set(Agent.agent(), atom(), boolean()) :: :ok
+  def set(agent, flag, value), do: Agent.update(agent, &Map.put(&1, flag, value))
 end
 ```
 
@@ -77,21 +82,26 @@ end
 defmodule MyApp.FeatureFlags do
   use GenServer
 
-  def start_link(initial), do: GenServer.start_link(__MODULE__, initial, name: __MODULE__)
-  def enabled?(flag), do: GenServer.call(__MODULE__, {:enabled?, flag})
-  def set(flag, value), do: GenServer.cast(__MODULE__, {:set, flag, value})
+  def start_link(%{name: name, flags: flags}),
+    do: GenServer.start_link(__MODULE__, flags, name: name)
 
-  def init(initial), do: {:ok, initial}
+  def enabled?(server, flag), do: GenServer.call(server, {:enabled?, flag})
+  def set(server, flag, value), do: GenServer.call(server, {:set, flag, value})
 
+  @impl true
+  def init(flags), do: {:ok, flags}
+
+  @impl true
   def handle_call({:enabled?, flag}, _from, state),
     do: {:reply, Map.get(state, flag, false), state}
 
-  def handle_cast({:set, flag, value}, state),
-    do: {:noreply, Map.put(state, flag, value)}
+  @impl true
+  def handle_call({:set, flag, value}, _from, state),
+    do: {:reply, :ok, Map.put(state, flag, value)}
 end
 ```
 
-**Why:** `Agent` is a GenServer with a narrower API for the get/update case. It communicates that no message-handling complexity exists. Upgrade to GenServer when timers, `handle_info`, or custom dispatch are needed.
+**Why:** `Agent` is a GenServer with a narrower API for the get/update case. It communicates that no message-handling complexity exists. The closure passed to `Agent.get/2` and `Agent.update/2` is sent to the agent and runs inside it, so a read and a read-modify-write are each one message handled by one callback. Both Correct `Agent.update/2` and Wrong `GenServer.call/2` wait for the update, so the comparison preserves the caller-visible completion contract. `enabled?/2` and `set/3` are transitions the module publishes rather than the state accessor ADR-002 Rule 1 removes. Upgrade to GenServer when timers, `handle_info`, or custom dispatch are needed.
 
 ### Rule 3: Task or Task.Supervisor for concurrent work
 
@@ -100,14 +110,56 @@ If the process lifetime matches the lifetime of a unit of work, use `Task`. For 
 **Correct:**
 
 ```elixir
-def send_welcome_emails(users) do
-  MyApp.TaskSupervisor
-  |> Task.Supervisor.async_stream_nolink(
-    users,
-    &Mailer.send_welcome/1,
-    max_concurrency: 10
+@spec send_welcome_emails(Supervisor.supervisor(), [User.t()], pos_integer()) ::
+        ErrorMessage.t_res([term()])
+def send_welcome_emails(task_supervisor, users, timeout_ms) do
+  task_supervisor
+  |> Task.Supervisor.async_stream_nolink(users, &MyApp.Mailer.send_welcome/1,
+    max_concurrency: 10,
+    timeout: timeout_ms,
+    on_timeout: :kill_task
   )
-  |> Enum.to_list()
+  |> MyApp.EmailBatch.collect()
+end
+
+defmodule MyApp.EmailBatch do
+  @moduledoc false
+
+  @spec capture((-> ErrorMessage.t_res(term()))) ::
+          {:ok, ErrorMessage.t_res(term())} | {:exit, term()}
+  def capture(operation) do
+    try do
+      {:ok, operation.()}
+    catch
+      kind, reason -> {:exit, {kind, reason}}
+    end
+  end
+
+  @spec collect(Enumerable.t()) :: ErrorMessage.t_res([term()])
+  def collect(results) do
+    results
+    |> Enum.reduce_while({:ok, []}, &collect_one/2)
+    |> reverse_receipts()
+  end
+
+  defp collect_one({:ok, {:ok, receipt}}, {:ok, receipts}),
+    do: {:cont, {:ok, [receipt | receipts]}}
+
+  defp collect_one({:ok, {:error, %ErrorMessage{}} = error}, _acc),
+    do: {:halt, error}
+
+  defp collect_one({:exit, _reason}, _acc) do
+    error =
+      ErrorMessage.service_unavailable(
+        "Welcome email worker stopped",
+        %{operation: :send_welcome_email}
+      )
+
+    {:halt, {:error, error}}
+  end
+
+  defp reverse_receipts({:ok, receipts}), do: {:ok, Enum.reverse(receipts)}
+  defp reverse_receipts({:error, %ErrorMessage{}} = error), do: error
 end
 ```
 
@@ -117,19 +169,30 @@ end
 defmodule MyApp.EmailSender do
   use GenServer
 
-  def start_link(_), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
-  def send_welcome_emails(users), do: GenServer.cast(__MODULE__, {:send_all, users})
+  def start_link(%{name: name}), do: GenServer.start_link(__MODULE__, [], name: name)
 
-  def init(_), do: {:ok, []}
+  @spec send_welcome_emails(GenServer.server(), [User.t()]) ::
+          ErrorMessage.t_res([term()])
+  def send_welcome_emails(server, users), do: GenServer.call(server, {:send_all, users})
 
-  def handle_cast({:send_all, users}, state) do
-    Enum.each(users, &Mailer.send_welcome/1)
-    {:noreply, state}
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:send_all, users}, _from, state) do
+    result =
+      users
+      |> Enum.map(fn user ->
+        MyApp.EmailBatch.capture(fn -> MyApp.Mailer.send_welcome(user) end)
+      end)
+      |> MyApp.EmailBatch.collect()
+
+    {:reply, result, state}
   end
 end
 ```
 
-**Why:** `Task.Supervisor` provides concurrency limits, supervision, and per-task lifecycle. The GenServer version serializes the batch through one process (no concurrency), couples the caller to the worker, and has no built-in backpressure.
+**Why:** Both versions wait for the batch and expose the same application-owned result contract. This example's local aggregate policy returns receipts when every delivery succeeds and otherwise returns the first observed structured error; another application may choose a different partial-success policy at this boundary. `on_timeout: :kill_task` turns the application-chosen task timeout into a stream exit value, `EmailBatch.collect/1` normalizes that and other raw task exits, and `EmailBatch.capture/1` gives the sequential comparison the same item-result envelope when an invocation raises, exits, or throws. The Correct version uses `max_concurrency` to bound this stream's in-flight tasks. The Wrong version performs each network call sequentially inside one callback, so every other message in that mailbox waits behind the entire batch, which is what ADR-004 rules out.
 
 ### Rule 4: Registry for named process lookup
 
@@ -138,19 +201,27 @@ If the purpose of the server is to map keys to processes, use `Registry`.
 **Correct:**
 
 ```elixir
-# Supervision tree:
+# In the supervision tree, which supplies the production names:
 {Registry, keys: :unique, name: MyApp.SessionRegistry}
+{DynamicSupervisor, strategy: :one_for_one, name: MyApp.SessionSupervisor}
 
-# Registration via :via tuple at start time:
-def start_session(session_id, opts) do
-  name = {:via, Registry, {MyApp.SessionRegistry, session_id}}
-  MyApp.Session.start_link(Map.put(opts, :name, name))
+# Registration happens at start time, through the :via tuple in the child's own opts:
+@spec start_session(
+        Supervisor.supervisor(),
+        Registry.registry(),
+        String.t(),
+        map()
+      ) :: DynamicSupervisor.on_start_child()
+def start_session(supervisor, registry, session_id, opts) do
+  child_opts = Map.put(opts, :name, {:via, Registry, {registry, session_id}})
+  DynamicSupervisor.start_child(supervisor, {MyApp.Session, child_opts})
 end
 
-def lookup(session_id) do
-  case Registry.lookup(MyApp.SessionRegistry, session_id) do
+@spec lookup(Registry.registry(), String.t()) :: ErrorMessage.t_res(pid())
+def lookup(registry, session_id) do
+  case Registry.lookup(registry, session_id) do
     [{pid, _meta}] -> {:ok, pid}
-    [] -> {:error, :not_found}
+    [] -> {:error, ErrorMessage.not_found("No session registered", %{id: session_id})}
   end
 end
 ```
@@ -161,12 +232,14 @@ end
 defmodule MyApp.SessionManager do
   use GenServer
 
-  def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
-  def lookup(id), do: GenServer.call(__MODULE__, {:lookup, id})
-  def register(id, pid), do: GenServer.call(__MODULE__, {:register, id, pid})
+  def start_link(%{name: name}), do: GenServer.start_link(__MODULE__, %{}, name: name)
+  def lookup(server, id), do: GenServer.call(server, {:lookup, id})
+  def register(server, id, pid), do: GenServer.call(server, {:register, id, pid})
 
+  @impl true
   def init(state), do: {:ok, state}
 
+  @impl true
   def handle_call({:lookup, id}, _from, state),
     do: {:reply, Map.get(state, id), state}
 
@@ -175,71 +248,92 @@ defmodule MyApp.SessionManager do
 end
 ```
 
-**Why:** `Registry` uses per-shard ETS for concurrent-read lookup, supports `:via` tuples so processes register themselves in their own child spec, and monitors registered processes to clean up entries automatically. The GenServer version serializes every lookup through one mailbox and must implement monitoring by hand.
+**Why:** `Registry` keeps its entries in ETS and reads them from the calling process, so node-local lookups do not queue behind a mailbox. It supports `:via` tuples so the DynamicSupervisor starts each child with its registration identity, and Registry removes registrations automatically when processes exit. The GenServer version serializes every lookup through one mailbox and must implement process monitoring itself. Its `register/3` is also a second message a caller has to remember after starting a process: before that message, a live child is missing from the directory; after it, a directory that does not monitor the child can retain a stale PID when the child exits. Making the `:via` name part of child startup removes that split protocol.
 
-### Rule 5: ETS for shared, concurrent-read state
+### Rule 5: ETS when readers must bypass a mailbox
 
-If multiple processes read the same state concurrently and writes are rare or can be coordinated, use ETS with an owning process for lifecycle.
+If multiple processes must read the same state directly and concurrently, use ETS with an owning process for lifecycle and mutation ownership. Each mutation is one atomic ETS operation or passes through one owner; requirements spanning objects, resources, writers, or failures belong in a datastore with the guarantees the application needs. Storage whose contract is a cache goes to a cache library with a sandbox adapter instead, per ADR-007 Rule 4.
 
 **Correct:**
 
 ```elixir
-defmodule MyApp.FlagStore do
-  use GenServer
+# lib/my_app/flags.ex - startup injects this handle into direct readers
+defmodule MyApp.Flags do
+  alias MyApp.Flags.Server
 
-  @table :feature_flags
+  @enforce_keys [:table, :writer]
+  defstruct [:table, :writer]
 
-  def start_link(initial),
-    do: GenServer.start_link(__MODULE__, initial, name: __MODULE__)
+  @type t :: %__MODULE__{table: :ets.table(), writer: GenServer.server()}
 
-  def enabled?(flag),
-    do: :ets.lookup_element(@table, flag, 2, false)
+  @spec connect(GenServer.server()) :: t()
+  def connect(server), do: Server.handle(server)
 
-  def set(flag, value),
-    do: GenServer.call(__MODULE__, {:set, flag, value})
+  @spec enabled?(t(), atom()) :: boolean()
+  def enabled?(%__MODULE__{table: table}, flag),
+    do: :ets.lookup_element(table, flag, 2, false)
 
-  def init(initial) do
-    :ets.new(@table, [:named_table, :protected, read_concurrency: true])
-    Enum.each(initial, fn {k, v} -> :ets.insert(@table, {k, v}) end)
-    {:ok, nil}
-  end
+  @spec set(t(), atom(), boolean()) :: :ok
+  def set(%__MODULE__{writer: writer}, flag, value),
+    do: GenServer.call(writer, {:set, flag, value})
+end
 
-  def handle_call({:set, flag, value}, _from, state) do
-    :ets.insert(@table, {flag, value})
-    {:reply, :ok, state}
-  end
+# lib/my_app/flags/server.ex - this process owns the unnamed table and all writes
+@impl true
+def init(%{flags: flags} = opts) do
+  table = :ets.new(:flags, [:set, :protected, read_concurrency: true])
+  :ets.insert(table, Map.to_list(flags))
+  {:ok, State.new(Map.put(opts, :table, table))}
+end
+
+@spec handle(GenServer.server()) :: MyApp.Flags.t()
+def handle(server), do: GenServer.call(server, :handle)
+
+@impl true
+def handle_call(:handle, _from, %State{table: table} = state) do
+  {:reply, %MyApp.Flags{table: table, writer: self()}, state}
+end
+
+@impl true
+def handle_call({:set, flag, value}, _from, state) do
+  {result, new_state} = Impl.set(state, flag, value)
+  {:reply, result, new_state}
+end
+
+# lib/my_app/flags/impl.ex - the write, as a function of the state it was handed
+@spec set(State.t(), atom(), boolean()) :: {:ok, State.t()}
+def set(%State{table: table} = state, flag, value) do
+  :ets.insert(table, {flag, value})
+  {:ok, state}
 end
 ```
 
 **Wrong:**
 
 ```elixir
-defmodule MyApp.FlagStore do
-  use GenServer
+# lib/my_app/flags.ex - the read is a message like every other message
+def enabled?(server, flag), do: GenServer.call(server, {:enabled?, flag})
 
-  def start_link(initial), do: GenServer.start_link(__MODULE__, initial, name: __MODULE__)
-  def enabled?(flag), do: GenServer.call(__MODULE__, {:enabled?, flag})
-  def set(flag, value), do: GenServer.call(__MODULE__, {:set, flag, value})
+# lib/my_app/flags/server.ex - the flags live in the process state, so both paths queue
+@impl true
+def handle_call({:enabled?, flag}, _from, state),
+  do: {:reply, Map.get(state, flag, false), state}
 
-  def init(initial), do: {:ok, initial}
-
-  def handle_call({:enabled?, flag}, _from, state),
-    do: {:reply, Map.get(state, flag, false), state}
-
-  def handle_call({:set, flag, value}, _from, state),
-    do: {:reply, :ok, Map.put(state, flag, value)}
-end
+def handle_call({:set, flag, value}, _from, state),
+  do: {:reply, :ok, Map.put(state, flag, value)}
 ```
 
-**Why:** Reads in the ETS version bypass the owning process and scale with concurrent readers. In the map-in-state version, every read queues behind every write and every unrelated message. The owning process exists to manage table lifecycle and serialize writes; it is not on the read path.
+**Why:** The unnamed table reference is an explicit capability tied to the owning server's lifetime. Subsystem startup obtains the handle once and injects it into readers; each read then runs in its caller and bypasses the mailbox. In the map-in-state version, every read queues behind every write and unrelated message. `:protected` permits direct reads while reserving writes for the owner, and the shown mutation is one atomic `:ets.insert/2`. The owner manages lifetime and mutation order; it is not on the read path. The owner's restart is where this arrangement is won or lost, so the supervision strategy is part of the rule rather than an afterthought. An unnamed table dies with the process that created it, and the replacement is a different reference, so every handle injected before the restart now names a table that does not exist and each read against it raises `ArgumentError` from then on. Put the owner and its direct readers in one subtree under `:rest_for_one`, with the owner started first, or under `:one_for_all`, so a reader restarts alongside the owner and obtains the new handle during its own startup. `:one_for_one` over that pair is the configuration that fails quietly: the owner comes back healthy, the readers were never restarted, and they keep reading through a dead reference. A table that genuinely must outlive its owner is a different decision and needs an `:heir` and a recovery path to go with it.
 
 ### When a GenServer IS the right answer
 
 Use GenServer when one or more of the following applies:
 
 - Serialized access to mutable state with multi-field invariants that ETS atomic operations cannot preserve.
-- Serialized access to a scarce resource (a TCP connection, a file handle, a rate-limited external API).
-- Long-lived coordination behavior combining calls, casts, `handle_info` messages, timers, and monitor events in a non-trivial way.
+- Exclusive ownership of a resource or protocol plus the admission, rate, timer, or monitor state governing it.
+- Long-lived coordination behavior combining calls, casts, `handle_info` messages, timers, monitor events, and readiness in a non-trivial way.
+
+Ownership does not make slow TCP, file, or HTTP work safe inside a callback. Keep dependency latency off the processing loop even when the GenServer owns the resource handle or the protocol state; ADR-004 and ADR-005 carry the task and reply lifecycle.
 
 If the reason does not fall into one of the above, use a simpler primitive.
 
@@ -247,7 +341,7 @@ If the reason does not fall into one of the above, use a simpler primitive.
 
 - Most code previously written as GenServers becomes modules, Agents, Tasks, Registries, or ETS-backed code.
 - Pure logic is testable in isolation without process setup.
-- Operational surface area shrinks: fewer processes, fewer supervision decisions, fewer mailbox-related failure modes.
+- Operational surface area shrinks: fewer bespoke servers, fewer unnecessary mailbox-serialization points, and fewer supervision decisions.
 - The GenServers that remain are load-bearing, and their presence signals genuine need.
 - Engineers must be fluent in the full primitive ladder (module, Agent, Task, Registry, ETS, GenServer) rather than GenServer alone.
 

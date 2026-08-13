@@ -4,6 +4,7 @@ id: 4
 title: Never Block the GenServer Processing Loop
 status: accepted
 date: 2026-04-22
+updated: 2026-08-09
 tags: [elixir, otp, genserver, performance, callbacks]
 description: GenServer callbacks handle one message at a time. Blocking I/O or unbounded computation in a callback stalls every other caller. Raising the call timeout papers over the problem instead of fixing it.
 ---
@@ -18,59 +19,95 @@ The default `GenServer.call/2` timeout is 5000 ms. Raising the timeout or passin
 
 When this rule is violated at scale, the consequences cascade. The mailbox of a slow server grows with every queued call. Messages to that process default to living on the process heap, so per-process GC scans them and pauses scale with mailbox size. `process_info` calls against long mailboxes have known degradations (OTP issues #5481 and #6494), so observability slows exactly when an operator needs it most.
 
-Before memory exhaustion, the choke point is the bloated process itself. Selective receive against a long mailbox is, per the Erlang Efficiency Guide, "very expensive for processes with long message queues." The process consumes its reductions by walking its own mailbox instead of doing useful work, and is scheduled out before it can make meaningful progress. Aggregate throughput across the node scales proportionally: the system stays nominally alive while latency rises and useful work per CPU-second drops. This is often a worse outcome than an outright crash, because supervisors cannot restart what is still running. The node holds its connections, refuses new work, and degrades silently until something external intervenes.
+Before memory exhaustion, the damage is latency rather than dispatch cost. `gen_server`'s loop is an unselective `receive Msg ->` that takes messages in delivery order, so the cost of reaching the callback is constant at any depth: the process never walks its queue looking for a message it prefers. That is narrower than "a deep mailbox is free", and the paragraph above is the reason: queued messages are on the heap by default, so collection scans them and the process does pay for depth. What depth does not change is the rate at which the callback retires work, and that rate is what decides the wait in front of each message. The queue drains at the rate the callback services it, so a server whose callback takes 30 seconds serves two calls a minute no matter how many are waiting, and the caller at position N waits for N-1 callbacks before its own runs. Throughput is capped by the callback, and latency rises without bound behind it. This is often a worse outcome than an outright crash, because supervisors cannot restart what is still running. The node holds its connections, accepts work it cannot drain, and degrades silently until something external intervenes.
 
 If growth continues, the BEAM eventually hits a memory ceiling (host OOM-kill or allocator failure), and the node dies. There is no graceful shutdown from a memory failure, no `terminate/2`, no supervisor restart of the dead process. A single slow callback in production is bounded only by the host's memory.
 
 ## Decision
 
-### Rule 1: No blocking I/O or unbounded computation in callbacks
+### Rule 1: Return from every callback in bounded time
 
 Callbacks return quickly. "Quickly" means bounded and predictable, not "fast in the happy case."
 
 **Correct:**
 
 ```elixir
-def handle_call({:reserve, sku, qty}, from, state) do
-  Task.Supervisor.start_child(MyApp.TaskSupervisor, fn ->
-    result = external_reserve(sku, qty)
-    GenServer.reply(from, result)
-  end)
-  {:noreply, state}
+# lib/my_app/inventory/server.ex
+@impl true
+def handle_call({:fetch_availability, sku}, from, %State{} = state) do
+  case Impl.start_availability_fetch(state, from, sku) do
+    {:ok, state} -> {:noreply, state}
+    {{:error, %ErrorMessage{}} = error, state} -> {:reply, error, state}
+  end
+end
+
+@impl true
+def handle_info({ref, result}, %State{} = state) when is_reference(ref) do
+  case Impl.finish_availability_fetch(state, ref, result) do
+    {:reply, from, reply, state} ->
+      GenServer.reply(from, reply)
+      {:noreply, state}
+
+    {:stale, state} ->
+      {:noreply, state}
+  end
+end
+
+def handle_info({:DOWN, ref, :process, _pid, _reason}, %State{} = state)
+    when is_reference(ref) do
+  case Impl.fail_availability_fetch(state, ref) do
+    {:reply, from, error, state} ->
+      GenServer.reply(from, error)
+      {:noreply, state}
+
+    {:stale, state} ->
+      {:noreply, state}
+  end
 end
 ```
 
 **Wrong:**
 
 ```elixir
-def handle_call({:reserve, sku, qty}, _from, state) do
-  {:ok, response} = HTTPoison.get("https://inventory.example.com/reserve/#{sku}/#{qty}")
-  {:reply, parse_response(response), state}
+# lib/my_app/inventory/server.ex
+# Warehouse.fetch_availability/1 is an HTTP read, run here on the loop.
+@impl true
+def handle_call({:fetch_availability, sku}, _from, %State{} = state) do
+  {:reply, Warehouse.fetch_availability(sku), state}
 end
 ```
 
-**Why:** The wrong version stalls every message in the mailbox for the duration of the HTTP request. If the upstream service has a 30-second tail, every caller of the server sees a 30-second tail, and the 5000 ms call timeout starts raising exits across the codebase. The correct version removes the slow work from the callback (the mechanisms are covered in ADR-005), keeps the loop free, and still returns the answer to the original caller.
+**Why:** A GenServer pulls one message at a time and runs its callback to completion before pulling the next, so the Wrong version's mailbox is stalled for the full duration of the HTTP request. If the vendor has a 30-second tail, every caller behind it waits through that tail, and the 5000 ms call timeout starts raising exits across the codebase. The Correct version admits an independent read to a supervised task and immediately returns to the mailbox. Its abbreviated `Impl` lifecycle tracks the accepted task, replies with a structured error if task admission fails or the task exits abnormally, and clears correlation on every terminal path. ADR-005 Rule 3 contains the complete owner-routed implementation.
 
-### Rule 2: Do not raise the call timeout to paper over slow callbacks
+`GenServer.reply/2` is a nonblocking message send. A complete lifecycle may let the task call it directly; the task exists for `Warehouse.fetch_availability/1`, never merely to send the reply. Whichever design is chosen must have exactly one reply owner. The task supervisor arrives through `state.deps` per ADR-007 so concurrent tests do not accidentally share task infrastructure.
 
-If callers are timing out on a GenServer, the fix is to speed up the callback, not to increase the caller's patience.
+### Rule 2: Fix the slow operation rather than raising the caller's timeout
+
+If callers are timing out on a GenServer, the fix is in the operation they are waiting on, not in the caller's patience.
 
 **Correct:**
 
 ```elixir
-def fetch_price(sku), do: GenServer.call(MyApp.Pricing.Server, {:fetch, sku})
+# lib/my_app/pricing.ex
+@spec fetch_price(GenServer.server(), String.t()) :: ErrorMessage.t_res(Decimal.t())
+def fetch_price(server, sku), do: GenServer.call(server, {:fetch_price, sku})
 ```
 
 **Wrong:**
 
 ```elixir
-def fetch_price(sku), do: GenServer.call(MyApp.Pricing.Server, {:fetch, sku}, 60_000)
+# lib/my_app/pricing.ex
+@spec fetch_price(GenServer.server(), String.t()) :: ErrorMessage.t_res(Decimal.t())
+def fetch_price(server, sku), do: GenServer.call(server, {:fetch_price, sku}, 60_000)
 ```
 
-**Why:** Raising the timeout hides the underlying problem (a slow callback) and extends the blast radius of a stall. `:infinity` is worse because a stuck upstream becomes a permanently stuck caller. If 5000 ms is routinely not enough, the callback is doing work it should not be doing inline.
+**Why:** The timeout is the caller's, not the server's, and it buys the caller nothing but a longer wait. `GenServer.call/3` monitors the server, blocks the calling process, and exits it with `{:timeout, {GenServer, :call, [server, request, timeout]}}` when the deadline passes. The timed-out caller's `$gen_call` message is already in the server's mailbox and stays there: the server will handle it in turn and reply to a caller that has stopped listening. Mailbox depth is therefore set by arrival rate against service rate, and the timeout value does not appear in that equation. Raising it changes one thing only, which is how long each caller waits before it learns something is wrong. `:infinity` removes the deadline entirely, so a stuck upstream becomes a permanently stuck caller and the failure never surfaces as a timeout at all.
+
+Rule 1 does not rescue this caller either, and it is worth being exact about why. Moving the warehouse read into a task frees the loop for everyone behind this caller, but the caller still waits for the warehouse because the reply is sent only when the work finishes. If 5000 ms is routinely not enough for one operation, the honest reading is that the operation is not a synchronous request: it wants a cast plus a notification, a job with a status the caller can poll, or a smaller unit of work. Raising the timeout dresses that decision up as a configuration value.
 
 ## Consequences
 
-- Callbacks stay bounded. Mailbox depth is driven by request rate, not by tail latency inside the server.
+- Short callbacks prevent dependency latency from stalling the mailbox.
 - Timeouts at call sites stay at the default. When they do fire, they point to a real problem rather than a config dial.
-- Slow work moves to tasks, continues, or asynchronous reply patterns. See ADR-005.
+- Slow work moves to supervised tasks with an explicit asynchronous reply lifecycle. See ADR-005.
+- An operation that cannot fit inside the default timeout is redesigned rather than reconfigured: it stops being a `call` and becomes a cast plus a notification, or a job whose status the caller can query.

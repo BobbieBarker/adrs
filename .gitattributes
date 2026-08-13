@@ -1,0 +1,6 @@
+# dist/ is rendered from adrs/ by tools/build_dist.exs and is committed so that
+# consumers can copy a bundle straight out of the repo without an Elixir
+# toolchain. It is generated output, not review surface: marking it collapses it
+# by default in pull request diffs and keeps it out of the language statistics.
+# The CI drift gate, not review, is what keeps it honest.
+dist/** linguist-generated=true

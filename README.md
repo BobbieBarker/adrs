@@ -8,7 +8,9 @@ The rules are grouped into domains. Each domain is a self-contained set with its
 
 | Domain | Covers | ADRs |
 |---|---|---|
-| [`elixir-otp`](adrs/elixir-otp) | OTP, GenServer, supervision, BEAM scheduling, interprocess data, stateful-process testing | 10 |
+| [`elixir-otp`](adrs/elixir-otp) | OTP, GenServer, supervision, BEAM scheduling, interprocess data, stateful-process testing | 12 |
+| [`elixir-conventions`](adrs/elixir-conventions) | Structural dispatch, runtime algorithm selection, pipeline composition, structs, `with` chains, streaming, effect compensation, structured errors | 8 |
+| [`elixir-ecto`](adrs/elixir-ecto) | Transaction boundaries and the commit contract | 1 |
 | [`elixir-code-anti-patterns`](adrs/elixir-code-anti-patterns) | The official Elixir code anti-patterns | 10 |
 | [`elixir-design-anti-patterns`](adrs/elixir-design-anti-patterns) | The official Elixir design anti-patterns | 6 |
 | [`elixir-macro-anti-patterns`](adrs/elixir-macro-anti-patterns) | The official Elixir meta-programming anti-patterns | 5 |
@@ -18,7 +20,7 @@ The rules are grouped into domains. Each domain is a self-contained set with its
 Working with GenServer and the BEAM rewards a precise mental model of how they actually behave. The wrong model produces the same predictable production failures: a callback blocks the processing loop, a process hoards state and pays for it in GC pauses, a `cast` pipeline grows an unbounded mailbox, `terminate/2` cleanup is silently skipped on a brutal kill. Humans build the wrong model. LLMs build the wrong model, often more confidently.
 
 - [ADR-001: Reach for Simpler Primitives Before GenServer](adrs/elixir-otp/adr-001-reach-for-simpler-primitives-before-genserver.md)
-- [ADR-002: Separate GenServer Business Logic From Server Mechanics](adrs/elixir-otp/adr-002-separate-business-logic-from-server-mechanics.md)
+- [ADR-002: Own State in the Process; Separate Transitions From Server Mechanics](adrs/elixir-otp/adr-002-separate-business-logic-from-server-mechanics.md)
 - [ADR-003: Keep GenServer State Small; Push Storage Out of Process](adrs/elixir-otp/adr-003-keep-state-small-push-storage-out-of-process.md)
 - [ADR-004: Never Block the GenServer Processing Loop](adrs/elixir-otp/adr-004-never-block-the-processing-loop.md)
 - [ADR-005: Get Slow Work Off the Processing Loop](adrs/elixir-otp/adr-005-get-slow-work-off-the-loop.md)
@@ -27,6 +29,32 @@ Working with GenServer and the BEAM rewards a precise mental model of how they a
 - [ADR-008: Graceful Shutdown Requires trap_exit and a Realistic :shutdown](adrs/elixir-otp/adr-008-graceful-shutdown-requires-trap-exit-and-realistic-shutdown.md)
 - [ADR-009: Send Minimal Data Between Processes](adrs/elixir-otp/adr-009-send-minimal-data-between-processes.md)
 - [ADR-010: Supervise Every Long-Lived Process](adrs/elixir-otp/adr-010-supervise-long-lived-processes.md)
+- [ADR-011: Test OTP Code Through Real Processes](adrs/elixir-otp/adr-011-test-otp-code-through-real-processes.md)
+- [ADR-012: The Shape of GenServer State](adrs/elixir-otp/adr-012-shape-of-genserver-state.md)
+
+### elixir-conventions
+
+These are the decisions a reader makes constantly and rarely writes down: which construct expresses
+a branch, whether an algorithm is chosen by the value or by the wiring, when a pipeline beats a
+rebinding, what a domain entity is made of, what may appear inside a `with`, and what a failure
+looks like once it leaves the function that produced it. Each rule names the compiler or runtime
+mechanism that separates the correct form from the plausible one.
+
+- [ADR-001: Structural Dispatch Over Imperative Branching](adrs/elixir-conventions/adr-001-structural-dispatch-over-imperative-branching.md)
+- [ADR-002: The Strategy Pattern in Elixir](adrs/elixir-conventions/adr-002-strategy-pattern-in-elixir.md)
+- [ADR-003: Compose with Pipes, Not Named Intermediates](adrs/elixir-conventions/adr-003-compose-with-pipes-not-named-intermediates.md)
+- [ADR-004: Use Structs for Domain Entities](adrs/elixir-conventions/adr-004-use-structs-for-domain-entities.md)
+- [ADR-005: Keep `with` Chains Pure](adrs/elixir-conventions/adr-005-keep-with-chains-pure.md)
+- [ADR-006: Stream Pass-Through Data, Source to Sink](adrs/elixir-conventions/adr-006-stream-pass-through-data.md)
+- [ADR-007: Compensate Completed Effects in Fallible Chains](adrs/elixir-conventions/adr-007-compensate-completed-effects.md)
+- [ADR-008: Represent Domain Errors as a Structured Value](adrs/elixir-conventions/adr-008-represent-domain-errors-as-a-structured-value.md)
+
+### elixir-ecto
+
+Database access decisions. Currently one: the transaction wrapper whose commit is decided by
+inspecting what your callback returned, rather than by whether it happened to raise.
+
+- [ADR-001: Use Repo.transact for Database Transactions](adrs/elixir-ecto/adr-001-use-repo-transact-for-transactions.md)
 
 ### elixir-code-anti-patterns
 

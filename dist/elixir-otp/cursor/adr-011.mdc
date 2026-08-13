@@ -1,0 +1,295 @@
+---
+description: "Start every test-scoped fixture or service with start_supervised!/1."
+alwaysApply: false
+---
+
+# ADR-011: Test OTP Code Through Real Processes
+
+## Context
+
+OTP tests fail in three characteristic ways. The first is non-isolation: a test starts a globally-named GenServer that outlives it and shares state with every other test that touches the same name. The suite then runs serially, or it runs concurrently and lies.
+
+The second is testing a behavior somewhere other than where its meaning lives. A direct state transition that takes state and an event gets driven through a live process, which buys startup cost, a message round trip, and a state-extraction problem, and buys no coverage. The mirror mistake is worse, because it is silent: a behavior whose meaning is ordering, serialized state transitions, or lifecycle gets tested against a process-free function, and the test stays green on a property the running system does not have. A serialized read-modify-write, a `handle_continue` that must run before the first client message, a monitor that must fire when a collaborator crashes, or cooperative best-effort shutdown cleanup: none of those exist outside a process.
+
+The third is state surgery. `:sys.replace_state/2` and `:sys.get_state/1` come from the `sys` module, which documents both as intended only to help with debugging, and documents `replace_state` additionally as not to be called from normal code. Tests reach for them anyway, because they are the shortest path to a state assertion. `replace_state` installs a state term without running any of the callbacks whose job is to keep that term consistent. `get_state` returns the callback module's private representation, which a test then hard-codes into an assertion. `get_state` has exactly one sound use, and it is synchronization rather than assertion; Rule 3 states the precondition and the mechanism it rests on.
+
+Elixir's Task and ExUnit caller-tracking machinery uses a per-process dictionary key called `$callers`, holding a chain of pids leading back to the test process. `Ecto.Adapters.SQL.Sandbox` can use that chain to resolve which test owns the database connection a spawned process is trying to use; besides calling `allow/3`, allowance can also be provided to processes via caller tracking. When the chain breaks, ownership lookup fails and the spawned process cannot read or write.
+
+This ADR covers test-author discipline: how to spin up processes for a test, where to point each assertion, what not to touch, and what to know about `$callers`. ADR-007 covers the complementary side, GenServer design for testability.
+
+## Decision
+
+Tests exercise the real OTP machinery the running system uses. Each behavior is tested at the boundary where its meaning lives, and no test writes to or asserts on a process's private state.
+
+### Rule 1: Use start_supervised!/1 for test-scoped fixtures and services
+
+When a test needs a process to live as a fixture or service for part or all of the test (a GenServer, a `Task.Supervisor`, a `Registry`, an `Agent`), start it with `start_supervised!/1` rather than calling its `start_link/1` directly. A short-lived task whose handle is explicitly awaited is work, not a fixture; supervise the owner it runs under and await its terminal result.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.InventoryTest do
+  use ExUnit.Case, async: true
+
+  alias MyApp.Inventory
+
+  setup do
+    table = :ets.new(:stock, [:set, :public])
+    :ets.insert(table, {"sku-1", 5})
+    server = start_supervised!({Inventory.Server, %{name: nil, stock_table: table}})
+
+    {:ok, server: server, table: table}
+  end
+
+  test "reserves stock that is on hand", %{server: server} do
+    assert {:ok, _reservation_id} = Inventory.reserve(server, "sku-1", 3)
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.InventoryTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    {:ok, _pid} = MyApp.Inventory.Server.start_link(%{name: __MODULE__, stock_table: :stock})
+    :ok
+  end
+end
+```
+
+**Why:** `start_supervised!/1` places the fixture under ExUnit's per-test supervisor, and ExUnit terminates that supervisor during teardown however the test ends: success, assertion failure, raise, or timeout. A bare `start_link/1` from `setup` leaves lifecycle tied only to a link and can race the next setup while a registered process is still shutting down. `name: __MODULE__` makes that collision certain because the node-local name registry is one namespace per VM. The Correct fixture needs no registration: the test owns an unnamed ETS table, injects its reference, captures the supervised server PID, and lets test teardown end both lifetimes. `async: false` prevents this case module from running concurrently with any other case module; it neither isolates a global name nor repairs shared mutable state, and it needlessly excludes concurrency when resources could have been per-test.
+
+### Rule 2: Test each behavior at the boundary where its meaning lives
+
+Test a state transition directly as a function when the design contains one: build a state value, apply the transition, assert on the returned state. Use a real supervised process when the behavior's meaning depends on mailbox ordering, serialized non-interleaving application of a transition, `call` / `cast` / `send` dispatch, timers, monitors, `handle_continue`, task result correlation, registration, supervision, restart, or shutdown. Do not create an `Impl` merely to make a test process-free. ADR-002 Rule 2 already puts an `Impl` next to every Server; its existence is not what decides the test boundary.
+
+**Correct:**
+
+```elixir
+# test/my_app/inventory/impl_test.exs
+# The transition is a function of state and event, so test it as one. setup
+# creates a per-test stock table holding {"sku-1", 5}.
+test "reserve/3 records the hold and deducts the units", %{table: table} do
+  state = State.new(%{name: nil, stock_table: table})
+
+  assert {{:ok, id}, %State{} = new_state} = Impl.reserve(state, "sku-1", 3)
+  assert Reservations.pending?(new_state.reservations, id)
+  assert [{"sku-1", 2}] === :ets.lookup(table, "sku-1")
+end
+
+# test/my_app/inventory_test.exs
+# Taking a hold out of the ledger exactly once is a property of the receive
+# loop, so test it through one. setup starts an unregistered Inventory.Server
+# supervised over the injected table holding {"sku-1", 5}.
+test "concurrent releases of one reservation return its units once",
+     %{server: server, table: table} do
+  {:ok, id} = Inventory.reserve(server, "sku-1", 3)
+
+  results =
+    1..5
+    |> Task.async_stream(fn _ -> Inventory.release(server, id) end, max_concurrency: 5)
+    |> Enum.map(fn {:ok, result} -> result end)
+
+  assert Enum.count(results, &(&1 === :ok)) === 1
+  assert Enum.count(results, &match?({:error, %ErrorMessage{}}, &1)) === 4
+  assert [{"sku-1", 5}] === :ets.lookup(table, "sku-1")
+end
+```
+
+**Wrong:**
+
+```elixir
+# test/my_app/inventory/impl_test.exs
+# Names a concurrency property and exercises none. Impl.release/2 threads state
+# by hand in one process, so this passes whether the Server takes the entry and
+# restocks inside a single callback or splits them across a handle_call that
+# reports the entry and a later handle_cast that removes it.
+test "concurrent releases of one reservation return its units once", %{table: table} do
+  state = State.new(%{name: nil, stock_table: table})
+
+  assert {{:ok, id}, one} = Impl.reserve(state, "sku-1", 3)
+  assert {:ok, two} = Impl.release(one, id)
+  assert {{:error, %ErrorMessage{code: :not_found}}, ^two} = Impl.release(two, id)
+  assert [{"sku-1", 5}] === :ets.lookup(table, "sku-1")
+end
+```
+
+**Why:** The `gen_server` receive loop is the serialization mechanism. It pulls one message from the mailbox and runs the callback to completion before decoding the next, so a transition that reads and writes state inside one callback does not interleave with another callback in that process. The levels live in a shared table whose single-object operations are atomic on their own, which leaves the ledger as the thing the loop protects: `Reservations.take/2` hands an entry to exactly one release because the calls run through the same mailbox, and the restock that follows belongs to that entry. That non-interleaving belongs to the loop, not to the function it calls: `Impl.release/2` returns the same value in a codebase where the Server applies it in one callback and in one where the Server splits the take and restock across messages, so a process-free test cannot distinguish them. `Process.send_after/3` delivery, `handle_continue` running before the first client message, a `:DOWN` signal, task-result correlation, and restart under a supervisor are likewise mailbox and lifecycle properties. The concurrent-call example asserts the invariant under the execution it observes; an uncontrolled `Task.async_stream/3` schedule does not prove that every possible split-phase interleaving occurred. When a particular interleaving is the regression, coordinate that interleaving explicitly or exercise it repeatedly rather than treating one scheduler run as a proof. The relationship is symmetric: direct transitions gain nothing from a process round trip, while lifecycle behavior cannot be established without the real process.
+
+### Rule 3: Drive state through the process's own commands, and use `:sys.get_state/2` only as a barrier for messages the test sent
+
+`:sys.replace_state/2` is prohibited. Not only on library-owned processes: on every process, including the ones your application owns. Do not use the value returned by `:sys.get_state/1` or `:sys.get_state/2` to assert on a process's private representation. A bounded `:sys.get_state(pid, timeout)` is permitted for exactly one purpose, as a mailbox synchronization barrier, and it is sound only for prior messages the same test process sent to that same live PID while it is executing its normal GenServer receive loop. It is not a barrier while the target is suspended, blocked indefinitely in a callback, or replaced after a restart. Discard its return value and assert through a surface the process publishes. When a barrier precedes the assertion, that surface is something other than a reply from the same process: a shared table it writes, a file it wrote, or a collaborator's recorded interaction. A synchronous reply needs no extra barrier only when the effect under test occurred before that reply was sent.
+
+**Correct:**
+
+```elixir
+setup do
+  table = :ets.new(:stock, [:set, :public])
+  :ets.insert(table, {"sku-1", 5})
+  server = start_supervised!({Inventory.Server, %{name: nil, stock_table: table}})
+
+  {:ok, server: server, table: table}
+end
+
+test "a restock reaches the shared stock table", %{server: server, table: table} do
+  # restock/3 is a cast: it returns before the units land in the table.
+  assert :ok === Inventory.restock(server, "sku-1", 10)
+
+  # Barrier. This process sent the cast, so the system message it sends next is
+  # handled after it. The value is discarded; only the ordering is used.
+  _ = :sys.get_state(server, 1_000)
+
+  assert [{"sku-1", 15}] === :ets.lookup(table, "sku-1")
+end
+```
+
+**Wrong:**
+
+```elixir
+# Same setup as the Correct example: a supervised server over its stock table.
+
+# State surgery. The write invents a hold that no reserve produced, so the units
+# it names were never deducted, and the release restocks them onto a table that
+# still carries them: a pairing no command can produce.
+test "releasing a reservation returns its units", %{server: server, table: table} do
+  :sys.replace_state(server, fn state ->
+    entry = %MyApp.Inventory.Reservation{
+      sku: "sku-1",
+      quantity: 3,
+      expires_at: DateTime.add(DateTime.utc_now(), 60)
+    }
+
+    reservations =
+      %Reservations{state.reservations | entries: %{1 => entry}, next_id: 2}
+
+    %{state | reservations: reservations}
+  end)
+
+  assert :ok === Inventory.release(server, 1)
+  assert [{"sku-1", 8}] === :ets.lookup(table, "sku-1")
+end
+
+# Dead barrier, private assertion. Inventory.reserve/3 is a GenServer.call from
+# this process, so it is already an ordered request and the barrier adds
+# nothing. The assertion then hard-codes the state struct's shape.
+test "reserve records the hold", %{server: server} do
+  assert {:ok, id} = Inventory.reserve(server, "sku-1", 3)
+
+  state = :sys.get_state(server, 1_000)
+  assert Map.has_key?(state.reservations.entries, id)
+end
+
+# Unsound barrier. recount/2 dispatches a task to the warehouse, and the count
+# reaches the server later as handle_info({ref, result}, state), sent by the
+# task process. This test never enqueued that message.
+test "a recount reaches the shared stock table", %{server: server, table: table} do
+  assert {:ok, _ref} = Inventory.recount(server, "sku-1")
+
+  _ = :sys.get_state(server, 1_000)
+
+  assert [{"sku-1", 12}] === :ets.lookup(table, "sku-1")
+end
+```
+
+**Why:** `sys` requests are messages, and that is the whole mechanism. Erlang's signal ordering guarantee is pairwise between one sender and one receiver: if `A` sends `S1` to `B`, and later sends `S2` to `B`, `S1` is not delivered after `S2`. Ordering alone is not yet the barrier, because delivery order says nothing about completion. The second half is `gen_server`'s loop: it is an unselective receive that takes messages in delivery order and runs each callback to completion before taking the next, and a `sys` request is an ordinary message in that queue with no priority over client work. Put the two together and a returned `:sys.get_state/2` proves that this same live PID finished handling the messages this test process had already sent it. It proves nothing about a timer, a task result, or a third-party message because those have different senders, and it is not global quiescence. The returned term is a separate problem: it is the callback module's internal representation with no compatibility contract, so assertions against it couple tests to private shape. `:sys.replace_state/2` is worse because it installs a term without running the commands that preserve relationships between fields. This does not become safe on an application-owned process; its invariants are enforced by those commands, and the write goes around all of them.
+
+### Rule 4: Start the same supervision tree in every environment
+
+`application.ex` builds one child list and uses it everywhere. Environment-owned application configuration still belongs in runtime or compile-time configuration as appropriate. Per-test process identity and substitutable collaborators come from instance opts (ADR-007 Rule 3), and datastore isolation comes from the test sandbox; neither requires an environment-conditional child list.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Application do
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    children = [
+      MyApp.Repo,
+      MyAppWeb.Endpoint,
+      {Task.Supervisor, name: MyApp.TaskSupervisor},
+      {MyApp.Inventory.Server, %{name: MyApp.Inventory.Server}},
+      {MyApp.PollLoop, %{name: MyApp.PollLoop}}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: MyApp.Supervisor)
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+# in MyApp.Application.start/2
+children =
+  if Mix.env() === :test do
+    [MyApp.Repo, MyAppWeb.Endpoint]
+  else
+    [
+      MyApp.Repo,
+      MyAppWeb.Endpoint,
+      {MyApp.Inventory.Server, %{name: MyApp.Inventory.Server}},
+      {MyApp.PollLoop, %{name: MyApp.PollLoop}}
+    ]
+  end
+
+Supervisor.start_link(children, strategy: :one_for_one, name: MyApp.Supervisor)
+```
+
+**Why:** The child list is the specification the supervisor executes. Static children start in list order; under `:one_for_one`, a terminated child restarts without restarting its siblings. Supervisor shutdown terminates children in reverse start order and applies each child spec's shutdown policy: workers default to a finite timeout, while supervisor children normally use `:infinity` so they can stop their own descendants. A different list is a different specification, so omitted children and environment-only ordering or restart behavior first execute in production. `MyApp.PollLoop` is absent from the Wrong test tree, so an `init/1` failure can wait until deploy. The Wrong version also calls `Mix.env()` at runtime even though `Mix` is a build tool and need not exist in a release. Keep the child topology constant. Application configuration may vary through the proper config boundary; per-test instance opts vary identity and injected collaborators without rewriting the tree. `MyApp.Repo` is the model: it starts everywhere and gets test isolation from `Ecto.Adapters.SQL.Sandbox` rather than omission.
+
+### Rule 5: Propagate `$callers` with Task or grant one dedicated process explicitly
+
+After the test owns a sandbox connection, `Ecto.Adapters.SQL.Sandbox` can resolve that owner through the `$callers` chain. A process spawned by a `Task` function called from the test carries that chain and can reach the same owner without an explicit grant. When the receiver already exists or is not spawned through that caller-propagating path, grant one dedicated process access with `Ecto.Adapters.SQL.Sandbox.allow/3` and assert that the grant succeeds. Never attach one singleton process to multiple concurrent sandbox owners.
+
+**Correct:**
+
+```elixir
+test "records a scan from a supervised task" do
+  supervisor = start_supervised!({Task.Supervisor, []})
+  scan = %{code: "abc-123", scanned_at: DateTime.utc_now()}
+
+  supervisor
+  |> Task.Supervisor.async(fn -> MyApp.Scans.record(scan) end)
+  |> Task.await()
+
+  assert [%MyApp.Scans.Scan{code: "abc-123"}] = MyApp.Scans.list()
+end
+
+test "records a scan from a dedicated worker" do
+  worker = start_supervised!({MyApp.ScanWorker, %{name: nil}})
+  scan = %{code: "abc-123", scanned_at: DateTime.utc_now()}
+
+  assert :ok = Ecto.Adapters.SQL.Sandbox.allow(MyApp.Repo, self(), worker)
+  assert :ok = MyApp.ScanWorker.record(worker, scan)
+
+  assert [%MyApp.Scans.Scan{code: "abc-123"}] = MyApp.Scans.list()
+end
+```
+
+**Wrong:**
+
+```elixir
+test "records a scan from the worker" do
+  send(MyApp.ScanWorker, {:record, %{code: "abc-123", scanned_at: DateTime.utc_now()}})
+
+  assert [%MyApp.Scans.Scan{code: "abc-123"}] = MyApp.Scans.list()
+end
+```
+
+**Why:** The process dictionary is per-process and ordinary spawning does not inherit it. Task primitives explicitly propagate `$callers` from the calling process into the task, which is why a task created from the test can resolve the test's existing sandbox owner. `$ancestors` is separate OTP/proc-lib ancestry metadata; it neither substitutes for `$callers` nor grants database ownership. A process already started by an application or test supervisor keeps the dictionary it started with, and later `call`, `cast`, or `send` operations do not rewrite it. `Sandbox.allow/3` supplies that missing ownership edge explicitly. Its result must be checked: reusing one singleton worker across concurrent owners is a conflict, not isolation. Prefer one unregistered worker PID per test; if the behavior truly requires a singleton, serialize that test intentionally and own the tradeoff. The Wrong version has neither caller propagation nor an explicit grant, and its bare send also races the assertion.
+
+## Consequences
+
+- Test-scoped process fixtures and services use `start_supervised!/1`, not bare `start_link/1`. Unregistered PIDs and unnamed resource handles keep them isolated under `async: true`.
+- Test files split by boundary rather than by ratio. `_impl_test.exs` holds direct state transitions; the API-level test file holds ordering, serialized state application, timers, monitors, task correlation, registration, supervision, restart, and shutdown. No `Impl` module is created to move a test across the line.
+- `:sys.replace_state/2` appears nowhere in the suite, on library-owned and application-owned processes alike.
+- Every `:sys.get_state/2` in the suite is a discarded-value barrier, immediately preceded by a message this test process sent and immediately followed by an assertion against something other than that process's own reply. A test that needs to wait on a timer, a task result, or a third process uses a mechanism that observes those, not this one.
+- Assertions name published surfaces: API return values, shared tables the process writes, files, a collaborator's recorded interaction. No test hard-codes a process's internal state term, so state refactors do not cascade into the suite.
+- `application.ex` has the same child topology in every environment. Application configuration uses its configuration boundary; per-test identity and collaborators use instance opts.
+- Tests that need database access from a process they spawn use a `$callers`-propagating Task function. Existing or independently supervised receivers get an asserted `Sandbox.allow/3` grant to a dedicated PID, never one singleton shared by concurrent owners.
+

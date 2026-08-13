@@ -1,99 +1,156 @@
 ---
 type: adr
 id: 2
-title: Separate GenServer Business Logic From Server Mechanics
+title: Own State in the Process; Separate Transitions From Server Mechanics
 status: accepted
 date: 2026-04-17
-tags: [elixir, otp, genserver, architecture, testing]
-description: "Split each GenServer into three modules across three files. The API module is the domain boundary, callers depend only on it. The Server module holds GenServer callbacks. The Impl module holds functions over explicit state with no GenServer awareness."
+updated: 2026-08-09
+tags: [elixir, otp, genserver, architecture, state-ownership, testing]
+description: "The process owns its state and the non-interleaving application of transitions against it. A process API publishes transitions and queries, never `get_state`, `replace_state`, or `update_state`, which turn one process-owned transition into a caller-side read-modify-write. Every GenServer splits into three modules across three files (API, Server, Impl), where Impl holds the subsystem's state transitions and policy, vendor translation, persistence, and lifecycle-and-correlation live in named sibling modules that each take the slice of state they own."
 ---
 
-# ADR-002: Separate GenServer Business Logic From Server Mechanics
+# ADR-002: Own State in the Process; Separate Transitions From Server Mechanics
 
 ## Context
 
-GenServers are frequently written as a single module that combines the public API, the GenServer callbacks, and the business logic. This couples three concerns that change independently:
+A GenServer exists to own a process-local lifecycle and serialize its own message handling. Each callback runs to completion before that process handles the next message, so state transitions applied inside one callback do not interleave with other callbacks in the same process. It does not create a transaction with ETS or another resource, and messages from different senders do not acquire a universal total order before they arrive. This process-local non-interleaving is the property relevant to this decision; ADR-001 carries the other reasons to choose a process, including exclusive ownership and long-lived coordination.
 
-- The public API (what callers invoke)
-- The server mechanics (message dispatch, callback signatures, return tuples)
-- The business logic (state transformations, rules, computation)
+It gets given away in two places. The first is the API. A server that exposes `get_state`, `replace_state`, or `update_state` has published its state instead of its transitions: the caller reads, decides, and writes back, three steps spread across two messages, with every other message in the mailbox eligible to run in between. The second is the layout. A GenServer written as one module combines the public API, the server mechanics, and the state transitions, so transitions can only be exercised by starting a process, and callers are coupled to the decision to use a process at all.
 
-When these concerns are entangled, business logic can only be tested by starting a process; every change to server mechanics risks breaking logic, and moving logic from a server to a library (or the reverse) requires rewriting everything. Callers are tightly coupled to the implementation choice: any change to that choice ripples out to every call site.
-
-The fix is a three-module split across three files. The API module is the boundary of the domain, the only module callers depend on. The Server module contains only GenServer callbacks. The Impl module contains functions that operate on explicit state and have no GenServer awareness. The point is loose coupling: callers depend on a stable interface, and the decision to implement the domain as a GenServer (or to replace it with something else later) is contained within the boundary and does not propagate to call sites.
+The fix for the second is a three-module split across three files: an API module that is the boundary of the domain, a Server module that holds callbacks and nothing else, and an Impl module that takes explicit state and returns a new one. `Impl` is not "where the business logic goes." A destination with no admission criteria collects everything, because nothing in the design named a better home: the eligibility rule, the HTTP call to the vendor, the write to the durable store, the timer arming, all in one file. `Impl` holds the subsystem's state transitions. Policy, vendor translation, persistence, and lifecycle-and-correlation each get a named sibling module under the subsystem namespace, so "not Impl" has an answer.
 
 ## Decision
 
-Split every GenServer into three modules.
+The process owns its state and the order of transitions against it. The API publishes transitions, never state. Every GenServer splits into three modules across three files, and `Impl` holds the transitions rather than everything else. The blocks below are reduced to the layout under discussion: opts reach `start_link/1` already validated against a declarative schema per ADR-007 Rule 2, and the registered name arrives in them per ADR-007 Rule 1.
 
-### Rule 1: Three modules per GenServer, each in its own file
+### Rule 1: The process owns its state, the order of transitions, and their lifecycle
 
-The file layout mirrors the module path. The domain lives in a directory; the API module sits next to that directory as the boundary callers depend on.
-
-```
-lib/my_app/
-├── inventory.ex            # MyApp.Inventory             (API, boundary of the domain)
-└── inventory/
-    ├── server.ex           # MyApp.Inventory.Server      (GenServer callbacks)
-    └── impl.ex             # MyApp.Inventory.Impl        (functions over explicit state, no GenServer awareness)
-```
-
-- **API module** (`MyApp.Inventory`, in `lib/my_app/inventory.ex`): the public entry point callers invoke. A thin boundary that hides whether the work is done by a GenServer, an Agent, plain functions, or something else.
-- **Server module** (`MyApp.Inventory.Server`, in `lib/my_app/inventory/server.ex`): GenServer callbacks only. No business logic.
-- **Impl module** (`MyApp.Inventory.Impl`, in `lib/my_app/inventory/impl.ex`): functions that take explicit state and return `{result, new_state}` (or equivalent). No GenServer awareness.
+A process API exposes transitions and queries. `get_state`, `replace_state`, and `update_state` are not part of any process's API, in production code or in test support. A caller that needs a state change asks for the change by name and receives its result.
 
 **Correct:**
 
 ```elixir
-# lib/my_app/inventory.ex
-defmodule MyApp.Inventory do
-  alias MyApp.Inventory.Server
+# lib/my_app/inventory.ex - the API publishes the transition, not the state
+@spec reserve(GenServer.server(), Stock.sku(), pos_integer()) ::
+        ErrorMessage.t_res(Reservations.id())
+def reserve(server, sku, qty), do: GenServer.call(server, {:reserve, sku, qty})
 
-  def start_link(opts \\ %{}), do: Server.start_link(opts)
-
-  def reserve(sku, qty, name \\ Server),
-    do: GenServer.call(name, {:reserve, sku, qty})
+# lib/my_app/inventory/server.ex - the deduction and the ledger write land in one callback
+@impl true
+def handle_call({:reserve, sku, qty}, _from, state) do
+  {result, new_state} = Impl.reserve(state, sku, qty)
+  {:reply, result, new_state}
 end
 ```
 
+**Wrong:**
+
 ```elixir
-# lib/my_app/inventory/server.ex
+# lib/my_app/inventory.ex - state published instead of transitions
+def get_state(server), do: GenServer.call(server, :get_state)
+
+def update_state(server, fun), do: GenServer.call(server, {:update_state, fun})
+
+# lib/my_app/checkout.ex - the transition is now assembled at the call site, out
+# of two messages, with the whole mailbox eligible to run between them
+def reserve(server, sku, qty) do
+  state = Inventory.get_state(server)
+
+  case Stock.reserve(state.deps.stock_table, sku, qty) do
+    :ok ->
+      {id, reservations} = Reservations.open(state.reservations, sku, qty)
+      Inventory.update_state(server, &%State{&1 | reservations: reservations})
+
+      {:ok, id}
+
+    {:error, %ErrorMessage{}} = error ->
+      error
+  end
+end
+```
+
+**Why:** A GenServer completes one callback before handling its next message, so the ledger transition in Correct cannot interleave with another Inventory callback. `get_state/1` and `update_state/2` split that transition across two messages. Two callers can each derive a ledger from stale state, then install those derived values after the process has moved on, causing one hold to disappear from the ledger. Lifecycle follows execution context too: if caller-side code invokes a transition that arms a timer with `self()`, the timer targets that caller rather than the owning server.
+
+`Stock.reserve/3` supplies a separate guarantee: it performs one conditional mutation of one ETS object atomically for writers using that protocol. Combining it with a serialized callback does not create rollback, durability, or one atomic commit across ETS and process state. A process crash after the ETS mutation but before the new state becomes current can still leave the two resources inconsistent. When a fact must survive crashes, make retries unambiguous, coordinate multiple writers, or become visible through one committed boundary, perform it in a datastore operation whose isolation and durability guarantees fit the application rather than reconstructing that datastore from GenServer state and ETS.
+
+`replace_state` carries another defect on top of the stale-ledger race: it installs a state value that no transition produced, so every caller must preserve process invariants by hand.
+
+### Rule 2: Three modules per GenServer, each in its own file
+
+The file layout mirrors the module path. The domain lives in a directory; the API module sits next to that directory as the boundary callers depend on. The Rule 3 siblings live in the same directory and are an architectural dependency boundary: production callers outside the subsystem do not depend on them, even though Elixir does not enforce module privacy.
+
+```
+lib/my_app/
+├── inventory.ex     # MyApp.Inventory        (API, the boundary callers depend on)
+└── inventory/
+    ├── server.ex    # MyApp.Inventory.Server (GenServer callbacks)
+    ├── impl.ex      # MyApp.Inventory.Impl   (state transitions, no GenServer awareness)
+    ├── state.ex     # MyApp.Inventory.State  (the process state struct)
+    ├── config.ex, deps.ex   # derived configuration, injected collaborators (ADR-012 Rule 2)
+    └── stock.ex, policy.ex, warehouse.ex, journal.ex, reservations.ex   (Rule 3)
+```
+
+**Correct:**
+
+```elixir
+# lib/my_app/inventory.ex - the boundary callers depend on
+defmodule MyApp.Inventory do
+  alias MyApp.Inventory.{Reservations, Server, Stock}
+
+  defdelegate start_link(opts), to: Server
+
+  @spec reserve(GenServer.server(), Stock.sku(), pos_integer()) ::
+          ErrorMessage.t_res(Reservations.id())
+  def reserve(server, sku, qty), do: GenServer.call(server, {:reserve, sku, qty})
+end
+
+# lib/my_app/inventory/server.ex - callbacks and nothing else
 defmodule MyApp.Inventory.Server do
   use GenServer
-  alias MyApp.Inventory.Impl
 
-  def start_link(opts \\ %{}) do
-    opts = Map.put_new(opts, :name, __MODULE__)
-    GenServer.start_link(__MODULE__, opts, name: opts.name)
-  end
+  alias MyApp.Inventory.{Impl, State}
 
-  def init(opts), do: {:ok, Impl.initial_state(opts)}
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(%{name: _name} = opts), do: start(opts)
 
+  defp start(%{name: nil} = opts),
+    do: GenServer.start_link(__MODULE__, opts)
+
+  defp start(%{name: name} = opts),
+    do: GenServer.start_link(__MODULE__, opts, name: name)
+
+  @impl true
+  def init(opts), do: {:ok, State.new(opts)}
+
+  @impl true
   def handle_call({:reserve, sku, qty}, _from, state) do
     {result, new_state} = Impl.reserve(state, sku, qty)
     {:reply, result, new_state}
   end
 end
-```
 
-```elixir
-# lib/my_app/inventory/impl.ex
+# lib/my_app/inventory/impl.ex - a value in, a value out, no process required
 defmodule MyApp.Inventory.Impl do
-  def initial_state(opts),
-    do: %{stock: Map.get(opts, :stock, %{}), reservations: %{}}
+  alias MyApp.Inventory.{Reservations, State, Stock}
 
-  def reserve(state, sku, qty) do
-    case Map.get(state.stock, sku) do
-      n when is_integer(n) and n >= qty ->
-        new_state = %{
-          state
-          | stock: Map.update!(state.stock, sku, &(&1 - qty)),
-            reservations: Map.update(state.reservations, sku, qty, &(&1 + qty))
-        }
-        {:ok, new_state}
+  @spec reserve(State.t(), Stock.sku(), pos_integer()) ::
+          {ErrorMessage.t_res(Reservations.id()), State.t()}
+  def reserve(%State{} = state, sku, qty) do
+    case Reservations.ensure_admission(state.reservations) do
+      :ok -> reserve_stock(state, sku, qty)
+      {:error, %ErrorMessage{}} = error -> {error, state}
+    end
+  end
 
-      _ ->
-        {{:error, :insufficient_stock}, state}
+  defp reserve_stock(%State{} = state, sku, qty) do
+    case Stock.reserve(state.deps.stock_table, sku, qty) do
+      :ok ->
+        {id, reservations} = Reservations.open(state.reservations, sku, qty)
+
+        {{:ok, id}, %State{state | reservations: reservations}}
+
+      {:error, %ErrorMessage{}} = error ->
+        {error, state}
     end
   end
 end
@@ -102,58 +159,145 @@ end
 **Wrong:**
 
 ```elixir
-# lib/my_app/inventory.ex - public API, callbacks, and logic all jammed into one file
+# lib/my_app/inventory.ex - API, callbacks, and the transition in one module
 defmodule MyApp.Inventory do
   use GenServer
 
-  def start_link(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  alias MyApp.Inventory.{Reservations, State, Stock}
 
-  def reserve(sku, qty), do: GenServer.call(__MODULE__, {:reserve, sku, qty})
+  def start_link(%{name: name} = opts), do: GenServer.start_link(__MODULE__, opts, name: name)
 
-  def init(opts), do: {:ok, %{stock: Map.get(opts, :stock, %{}), reservations: %{}}}
+  def reserve(server, sku, qty), do: GenServer.call(server, {:reserve, sku, qty})
 
+  @impl true
+  def init(opts), do: {:ok, State.new(opts)}
+
+  @impl true
   def handle_call({:reserve, sku, qty}, _from, state) do
-    case Map.get(state.stock, sku) do
-      n when is_integer(n) and n >= qty ->
-        new_state = %{
-          state
-          | stock: Map.update!(state.stock, sku, &(&1 - qty)),
-            reservations: Map.update(state.reservations, sku, qty, &(&1 + qty))
-        }
-        {:reply, :ok, new_state}
+    case Stock.reserve(state.deps.stock_table, sku, qty) do
+      :ok ->
+        {id, reservations} = Reservations.open(state.reservations, sku, qty)
 
-      _ ->
-        {:reply, {:error, :insufficient_stock}, state}
+        {:reply, {:ok, id}, %State{state | reservations: reservations}}
+
+      {:error, %ErrorMessage{}} = error ->
+        {:reply, error, state}
     end
   end
 end
 ```
 
-**Why:** The split is structural, not just lexical. Three modules in three files means callers `alias MyApp.Inventory` and depend on the boundary only; they never see `Server` or `Impl`. `Impl` functions are testable with explicit state and no process. Server callbacks become mechanical enough that changes to them rarely affect logic. The API module absorbs the choice of whether a GenServer exists at all: if the domain evolves into something other than a GenServer (a plain library, an Agent, a Task pool, a process per entity behind a Registry), `lib/my_app/inventory.ex` is the only file callers indirectly depend on, and the API signatures stay identical. In the single-module, single-file version, every caller imports the same module that does the work, every logic test starts a process, and any restructuring of state or dispatch touches logic.
+**Why:** `use GenServer` injects `child_spec/1` plus public default implementations of `handle_call/3`, `handle_cast/2`, `handle_info/2`, `terminate/2`, and `code_change/3` into the module that invokes it. In the Wrong version that module is `MyApp.Inventory`, so the one module callers alias exports the domain functions and OTP callback set from a single namespace. Putting `use GenServer` in `Server` makes the intended dependency boundary visible. The other half of the split is reachability: a callback body runs only through a live process, while `Impl.reserve/3` accepts and returns values, so genuine transitions can be tested directly over a State and injected table. Lifecycle behavior still belongs in tests against the real process. The API localizes caller dependencies when the concurrency primitive changes; such a change may still require coordinated internal edits or an intentional semantic change, but callers do not depend on callback modules or message tags.
 
-### Rule 2: Impl has no GenServer awareness
+### Rule 3: An Impl function orchestrates; it does not implement what it calls
 
-`Impl` takes an explicit state and returns a result paired with a new state. It does not call `GenServer.reply`, does not return GenServer callback tuples (`{:reply, _, _}`, `{:noreply, _}`), and does not pattern match on `from`. Beyond that, it is ordinary Elixir: it can emit telemetry, read or write ETS tables, and call other modules (including those fronted by an Agent, Registry, or GenServer) as needed.
+An `Impl` function takes the state, sequences the collaborators a use case needs, and returns the new state with a result. It is a controller. It owns the order of the steps, the success and failure conditions, and the point at which a proposed transition becomes the current state. Sequencing several collaborators in one function is what `Impl` is for.
+
+Two questions decide whether code belongs in `Impl`:
+
+1. **Does it take the state and return the state?** A function that never touches the state is not an `Impl` function.
+2. **Does it call the behavior, or contain it?** `Impl` calls the eligibility rule; it does not encode the rule. It calls the port; it does not know the vendor's field names. It calls the store; it does not know the key format. It asks for a timer; it does not carry the correlation bookkeeping.
+
+Each collaborator lives in its own module under the subsystem namespace and receives the slice of state it owns rather than the whole `State`. Collaborators an `Impl` function sequences include policy (business decisions, calculations, eligibility, validation), vendor translation ((de)serialization between internal and external models), persistence (durable-store mechanics, keys, serialization, recovery), and lifecycle and correlation (timers, monitors, task references, generation fencing, stale-result rejection, restart resumption).
+
+Module placement assigns responsibility; the invocation protocol determines where code executes. A synchronous call from `Impl` to a sibling still runs in the GenServer callback and must be bounded. Anything that reaches the network or disk is dispatched through ADR-005's mechanisms, whose results return to the process as messages. Moving the function into `Warehouse` or `Journal` without changing how it is invoked does not move work off the loop. Dispatching it does not erase outcome ownership: idempotency, recovery, reconciliation, or compensation still follows from the effect and the application's guarantees.
+
+**Correct:**
+
+```elixir
+# lib/my_app/inventory/impl.ex - the transition, and only the transition
+@spec reserve(State.t(), Stock.sku(), pos_integer()) ::
+        {ErrorMessage.t_res(Reservations.id()), State.t()}
+def reserve(%State{} = state, sku, qty) do
+  case Reservations.ensure_admission(state.reservations) do
+    :ok -> reserve_sellable(state, sku, qty)
+    {:error, %ErrorMessage{}} = error -> {error, state}
+  end
+end
+
+defp reserve_sellable(%State{} = state, sku, qty) do
+  case place(state.config, state.deps.stock_table, sku, qty) do
+    :ok ->
+      {id, reservations} = Reservations.open(state.reservations, sku, qty)
+
+      {{:ok, id}, %State{state | reservations: reservations}}
+
+    {:error, %ErrorMessage{}} = error ->
+      {error, state}
+  end
+end
+
+# Policy judges the slice it is handed; Stock owns the one row it changes.
+# Warehouse and Journal are absent: they reach the network and the disk.
+defp place(%Config{} = config, table, sku, qty) do
+  case Policy.sellable(config, sku, qty) do
+    :ok -> Stock.reserve(table, sku, qty)
+    {:error, %ErrorMessage{}} = error -> error
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+# lib/my_app/inventory/impl.ex - one function holding a domain decision, a vendor
+# call, a durable write, a timer, and the transition
+@sellable_fraction 0.9
+@ttl_ms 60_000
+@endpoint "https://wms.example.com/reservations"
+
+def reserve(%State{} = state, sku, qty) do
+  [{^sku, available}] = :ets.lookup(state.deps.stock_table, sku)
+
+  if qty > trunc(available * @sellable_fraction) do
+    {{:error, ErrorMessage.conflict("Above the sellable ceiling", %{sku: sku})}, state}
+  else
+    case Req.post(@endpoint, json: %{"sku" => sku, "units" => qty}) do
+      {:ok, %Req.Response{status: 201, body: %{"reservation_id" => id}}} ->
+        :ets.insert(state.deps.stock_table, {sku, available - qty})
+        :dets.insert(:inventory_journal, {id, sku, qty, DateTime.utc_now()})
+        Process.send_after(self(), {:expire, id}, @ttl_ms)
+        entries = Map.put(state.reservations.entries, id, {sku, qty})
+        held = %Reservations{state.reservations | entries: entries}
+
+        {{:ok, id}, %State{state | reservations: held}}
+
+      {:ok, %Req.Response{status: status}} ->
+        {{:error, ErrorMessage.conflict("Warehouse rejected", %{status: status})}, state}
+
+      {:error, _reason} ->
+        {{:error,
+          ErrorMessage.service_unavailable(
+            "Warehouse unavailable",
+            %{operation: :reserve_stock}
+          )}, state}
+    end
+  end
+end
+```
+
+**Why:** `Process.send_after/3` sends to the process named by its first argument, and `Reservations` names `self()`, so the expiry timers it arms are invocable only from the owning process, and a test that calls `Reservations.open/3` directly gets `{:expire, id}` in its own mailbox. That single mechanism sorts the subsystem, because no other collaborator carries that constraint and each has a different reason to change. `Policy` is a pure function of values, so its tests are input and output over `Config` and scalars, with no whole State, process, or stub. `Stock` is the only module that knows the table's key format and the single atomic operation that changes a row, so a deduction against a shared store stays one operation instead of becoming a read and a later write (ADR-003 Rule 1). `Warehouse` is the port where the vendor's external model stops, so it is the only module that changes when the vendor renames `"reservation_id"`, and because it speaks HTTP it is driven from a task whose result returns to the process as a message (ADR-004 Rule 1, ADR-005 Rules 2 and 5) rather than from inside a transition. `Journal` owns keys, serialization, and recovery, so swapping the durable store is one file. The Wrong version welds all five fates together: the ceiling rule cannot be exercised without stubbing an HTTP call, the vendor's wire keys are read inside the transition, the callback blocks the loop on a network round trip and a disk write (ADR-004 Rule 1), and `:dets.insert/2`'s return value is discarded, so a failed journal write after `Req.post/2` returned 201 permits the callback to return success with no durable record and no defined compensation or reconciliation path (`elixir-conventions` ADR-007 Rule 1). It also reaches the table twice, with a `lookup` that decides and an `insert` that writes, and the table is shared, so a writer outside this process lands between them and its decrement is overwritten: the oversell that ADR-003 Rule 1's single `select_replace/2` exists to prevent. The slice is the same rule stated at the signature: `Policy.sellable(Config.t(), ...)` cannot read `reservations`, cannot reach the table, cannot arm a timer, and cannot be broken by a field added to `State`, because it never receives one, and its test passes a `Config` carrying a ceiling rather than a whole process state. `Impl` is the exception because it coordinates and recombines the concern sub-structs touched by one transition under the whole State.
+
+### Rule 4: Impl speaks in values, not GenServer callback tuples
+
+`Impl` takes explicit state and returns a result paired with a new state. It does not call `GenServer.reply/2`, does not return GenServer callback tuples (`{:reply, _, _}`, `{:noreply, _}`), and does not pattern match on `from`. The constraint is on callback vocabulary, not on effects.
 
 **Correct:**
 
 ```elixir
 # lib/my_app/inventory/impl.ex
-defmodule MyApp.Inventory.Impl do
-  def reserve(state, sku, qty) do
-    case Map.get(state.stock, sku) do
-      n when is_integer(n) and n >= qty ->
-        :telemetry.execute([:inventory, :reserved], %{qty: qty}, %{sku: sku})
-        {:ok, deduct_stock(state, sku, qty)}
+alias MyApp.Inventory.Reservation
 
-      _ ->
-        {{:error, :insufficient_stock}, state}
-    end
-  end
+@spec expire(State.t(), Reservations.id()) :: State.t()
+def expire(%State{} = state, id) do
+  case Reservations.take(state.reservations, id) do
+    {nil, _reservations} ->
+      state
 
-  defp deduct_stock(state, sku, qty) do
-    %{state | stock: Map.update!(state.stock, sku, &(&1 - qty))}
+    {%Reservation{sku: sku, quantity: quantity}, reservations} ->
+      Stock.restock(state.deps.stock_table, sku, quantity)
+
+      %State{state | reservations: reservations}
   end
 end
 ```
@@ -161,74 +305,76 @@ end
 **Wrong:**
 
 ```elixir
-# lib/my_app/inventory/impl.ex
-defmodule MyApp.Inventory.Impl do
-  # Returns GenServer callback tuples and accepts `from` -
-  # couples Impl to the callback it is invoked from.
-  def reserve(state, sku, qty, from) do
-    case Map.get(state.stock, sku) do
-      n when is_integer(n) and n >= qty ->
-        GenServer.reply(from, :ok)
-        {:noreply, deduct_stock(state, sku, qty)}
+# lib/my_app/inventory/impl.ex - callback tuples and a `from`, which weld Impl to
+# the callback it happens to be invoked from
+alias MyApp.Inventory.Reservation
 
-      _ ->
-        {:reply, {:error, :insufficient_stock}, state}
-    end
+def expire(%State{} = state, id, from) do
+  case Reservations.take(state.reservations, id) do
+    {nil, _reservations} ->
+      {:reply, {:error, ErrorMessage.not_found("Unknown reservation", %{id: id})}, state}
+
+    {%Reservation{sku: sku, quantity: quantity}, reservations} ->
+      GenServer.reply(from, :ok)
+      Stock.restock(state.deps.stock_table, sku, quantity)
+
+      {:noreply, %State{state | reservations: reservations}}
   end
 end
 ```
 
-**Why:** What makes `Impl` testable is that it operates on plain state and speaks in the vocabulary of functions, not GenServer callbacks. Once `Impl` returns `{:reply, _, _}` or accepts a `from` tuple, the Server and Impl collapse into each other, and tests can only exercise Impl through a live process.
+**Why:** `from` is the OTP request token normally supplied to `handle_call/3`, so accepting it welds `Impl` to that callback protocol and removes the direct function-level test. Returning callback tuples has a second effect: the Wrong version answers the caller two different ways depending on the branch, once through `GenServer.reply/2` and once through `{:reply, _, _}`, so the Server can no longer tell from the return value whether a reply was already sent. Effects are a separate question and are not what this rule restricts. A synchronously invoked `Impl` and its siblings run inside the owning process, so `self()` is the server; reading or writing the table, emitting telemetry, or arming a timer may be legitimate there when bounded. Rule 3 decides which module owns those responsibilities; this rule decides only that the transition does not speak GenServer.
 
-Things that are NOT required for Impl to be testable, despite common confusion: the absence of telemetry, the absence of calls to other (possibly named) processes, or the absence of timers. A timer is scheduled with `Process.send_after(self(), _, _)` inside `Impl` is a coupling choice to weigh on a case-by-case basis (`self()` points to the test process when called from a test), but it is not categorically wrong.
+### Rule 5: Domain-transition callbacks are thin dispatchers
 
-### Rule 3: Server callbacks are thin dispatchers
-
-Each callback calls one `Impl` function and wraps the result in the appropriate GenServer return tuple. No business logic in callback bodies.
+Each callback applying a domain transition calls one `Impl` function and wraps the result in the appropriate GenServer return tuple. No domain transition or business decision belongs in the callback body. `Server` still owns bounded OTP mechanics that are not value-level transitions: initialization, task admission, monitoring, correlation, readiness, and replies.
 
 **Correct:**
 
 ```elixir
 # lib/my_app/inventory/server.ex
+@impl true
 def handle_call({:reserve, sku, qty}, _from, state) do
   {result, new_state} = Impl.reserve(state, sku, qty)
   {:reply, result, new_state}
 end
 
-def handle_info(:cleanup_expired_reservations, state) do
-  new_state = Impl.expire_reservations(state, DateTime.utc_now())
-  {:noreply, new_state}
-end
+@impl true
+def handle_info({:expire, id}, state), do: {:noreply, Impl.expire(state, id)}
 ```
 
 **Wrong:**
 
 ```elixir
 # lib/my_app/inventory/server.ex
-def handle_call({:reserve, sku, qty}, _from, state) do
-  case Map.get(state.stock, sku) do
-    n when is_integer(n) and n >= qty ->
-      new_state = %{state | stock: Map.update!(state.stock, sku, &(&1 - qty))}
-      {:reply, :ok, new_state}
+@impl true
+def handle_call({:reserve, sku, qty}, _from, %State{} = state) do
+  case :ets.lookup(state.deps.stock_table, sku) do
+    [{^sku, available}] when available >= qty ->
+      :ets.insert(state.deps.stock_table, {sku, available - qty})
+      {id, held} = Reservations.open(state.reservations, sku, qty)
 
-    _ ->
-      {:reply, {:error, :insufficient_stock}, state}
+      {:reply, {:ok, id}, %State{state | reservations: held}}
+
+    _rows ->
+      {:reply, {:error, ErrorMessage.conflict("Insufficient stock", %{sku: sku})}, state}
   end
 end
 ```
 
-**Why:** Callback-embedded logic cannot be tested without starting the process, and it accumulates. Thin callbacks make the Server module boring to review (one pattern per callback shape) and keep `Impl` the single place reviewers look for logic changes.
+**Why:** A callback body is reachable only by sending the process a message, so every direct assertion about the transition in Wrong needs process setup and a round trip, then tempts the test toward a private getter or `:sys.get_state/2`. Correct makes the actual transition callable with values. Lifecycle behavior (admission, task failure, timer correlation, reply ownership, restart) remains tested through the real process rather than being forced into a fake value-level transition. The Wrong body also decides against the table in two operations, a `lookup` and an `insert`, which ADR-003 rejects independently of layout: moving it into `Impl` unchanged would fix the file boundary and preserve the oversell.
 
-### Rule 4: Callers depend on the API module, not the Server
+### Rule 6: Callers depend on the API module, not the Server
 
-The API module is the boundary of the domain. Callers' alias and call it. `MyApp.Inventory.Server` and `MyApp.Inventory.Impl` is implementation detail, addressable only from inside the domain.
+The API module is the boundary of the domain. Production callers alias it and call it. `MyApp.Inventory.Server` and `MyApp.Inventory.Impl` are implementation details by architectural convention, not inaccessible Elixir modules; production code outside the subsystem does not depend on them.
 
 **Correct:**
 
 ```elixir
 # anywhere in lib/my_app/...
 alias MyApp.Inventory
-Inventory.reserve("sku-1", 3)
+
+Inventory.reserve(server, "sku-1", 3)
 ```
 
 **Wrong:**
@@ -238,11 +384,13 @@ Inventory.reserve("sku-1", 3)
 GenServer.call(MyApp.Inventory.Server, {:reserve, "sku-1", 3})
 ```
 
-**Why:** Loose coupling is what makes the implementation choice reversible. When every caller depends on `MyApp.Inventory`. The question of whether the domain is a GenServer, an Agent, a Task pool, a process per entity behind a Registry, or just a plain library lies entirely within `lib/my_app/inventory/`. Swapping implementations does not propagate to call sites. If callers reach through to `GenServer.call(MyApp.Inventory.Server, ...)` directly, the server is no longer an implementation detail; it is part of the public contract, and removing it means touching every call site in the codebase.
+**Why:** `GenServer.call/3` resolves its first argument to a process: an atom through the local name registry or a `{:via, module, term}` tuple through the named registry module. `MyApp.Inventory.Server` is a module atom, while ADR-007 requires production identity to arrive in opts and ordinary tests to use unregistered PIDs, so the Wrong call commonly names no process and exits with `:noproc`. Where it does resolve, it publishes both the existence of the process and the wire format of its messages. `{:reserve, sku, qty}` becomes a caller contract, and replacing the process or changing that protocol becomes a call-site migration. It also bypasses the API module's declared result contract.
 
 ## Consequences
 
-- Business-logic tests run directly against `Impl` with explicit state. No `start_supervised!`, no async ceremony.
-- Process-level tests cover only the dispatch, startup, and handle_info paths.
-- Moving logic between a GenServer and a plain library is a single-file change at the API layer.
-- The question from ADR-001 ("Should this be a GenServer at all?") is cheap to revisit because the logic does not move.
+- No process API has a generic state accessor. Every public function names a transition or a query, and no caller can assemble a transition out of two calls.
+- What the process owns is the ledger of work it is currently coordinating, and its callbacks apply ledger transitions without interleaving. Data sized by the catalogue lives in a shared store reached through `deps` (ADR-003 Rule 1). A conditional store mutation and a process-state transition remain separate guarantees, not one transaction.
+- Genuine transition tests run directly against `Impl` and sub-state modules with explicit values. Process-level tests cover dispatch, startup, admission, replies, `handle_info`, correlation, timers, monitors, and restart: the behavior that actually needs a process.
+- Policy, vendor translation, persistence, and lifecycle work have named destinations under the subsystem namespace, so "where does this go" has an answer that is not `Impl`. Each takes the slice it owns, so its test fixtures are small and a new field on the state struct does not widen what it can touch.
+- Transitions perform no network calls and no disk writes, because siblings that do those are invoked off the loop per ADR-005. Off-loop execution preserves responsiveness; it does not remove idempotency, recovery, reconciliation, or compensation responsibilities for accepted external effects.
+- Moving a domain between a GenServer and a simpler primitive keeps caller dependencies localized at the API layer. Internal wiring and semantics may still require coordinated changes, but message tags and callback modules do not leak across the codebase.

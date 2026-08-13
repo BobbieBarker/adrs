@@ -1,0 +1,16 @@
+domain: elixir-ecto
+title: "Elixir Ecto"
+description: "ADRs covering database access decisions: transaction boundaries and the commit contract."
+
+adrs:
+  - id: 1
+    file: adr-001-use-repo-transact-for-transactions.md
+    title: "Use Repo.transact for Database Transactions"
+    description: "Wrap every database transaction in `Repo.transact/2`, whose callback commits on a final normal `{:ok, _}` and rolls back on a final normal `{:error, _}`."
+    applies_to:
+      content_match:
+        - "Repo.transaction"
+        - "Repo.transact"
+        - "Ecto.Multi"
+        - "Repo.rollback"
+

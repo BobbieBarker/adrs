@@ -1,0 +1,107 @@
+domain: elixir-conventions
+title: "Elixir Conventions"
+description: "ADRs covering language-level decisions: structural dispatch, runtime algorithm selection, pipeline composition, struct-based domain entities, `with` chain discipline, streaming pass-through data, effect compensation, and structured error values."
+
+adrs:
+  - id: 1
+    file: adr-001-structural-dispatch-over-imperative-branching.md
+    title: "Structural Dispatch Over Imperative Branching"
+    description: "Every branching construct in Elixir fits one shape of discriminator: argument shape goes in the function head, guard-safe predicates go in guards, dependent fallible steps go in `with`, ordered non-guard-safe predicates go in `cond`, a value the function just computed goes in `case`, and `if` handles one two-way non-guard-safe predicate or inline value selection."
+    applies_to:
+      content_match:
+        - "if "
+        - "unless "
+        - "cond do"
+        - "case "
+        - "def handle_event"
+        - "when "
+
+  - id: 2
+    file: adr-002-strategy-pattern-in-elixir.md
+    title: "The Strategy Pattern in Elixir"
+    description: "Strategy is the decision to select an algorithm at runtime."
+    applies_to:
+      content_match:
+        - "@behaviour"
+        - "@callback"
+        - "@impl true"
+        - "defprotocol"
+        - "defimpl"
+        - "is_function("
+
+  - id: 3
+    file: adr-003-compose-with-pipes-not-named-intermediates.md
+    title: "Compose with Pipes, Not Named Intermediates"
+    description: "Express sequential transformations through |> pipes, not chained rebindings of one name."
+    applies_to:
+      content_match:
+        - "|>"
+        - "then("
+        - "tap("
+        - "Enum.map(fn"
+        - "Enum.reduce(fn"
+
+  - id: 4
+    file: adr-004-use-structs-for-domain-entities.md
+    title: "Use Structs for Domain Entities"
+    description: "Define every domain entity as a struct with a fully enumerated @type t and @enforce_keys for values callers must supply."
+    applies_to:
+      content_match:
+        - "defstruct"
+        - "@type t ::"
+        - "@enforce_keys"
+        - "@derive"
+        - "Jason.Encoder"
+
+  - id: 5
+    file: adr-005-keep-with-chains-pure.md
+    title: "Keep `with` Chains Pure"
+    description: "Inside a `with` chain, every clause uses `<-` with a refutable success pattern."
+    applies_to:
+      content_match:
+        - "with {"
+        - "with :ok"
+        - "else
+"
+        - "Repo.transact"
+        - "<-"
+
+  - id: 6
+    file: adr-006-stream-pass-through-data.md
+    title: "Stream Pass-Through Data, Source to Sink"
+    description: "When data is passing through to a downstream sink (export, upload, relay), stream source → transform → sink with a bounded payload working set."
+    applies_to:
+      content_match:
+        - "Repo.stream"
+        - "Stream."
+        - "ExAws.S3.upload"
+        - "File.read!"
+        - "Enum.join"
+        - "Zstream"
+
+  - id: 7
+    file: adr-007-compensate-completed-effects.md
+    title: "Compensate Completed Effects in Fallible Chains"
+    description: "`with` propagates a returned failure and undoes nothing."
+    applies_to:
+      content_match:
+        - "with {"
+        - "Task.Supervisor"
+        - "rollback"
+        - "compensat"
+        - "release("
+        - "acquire("
+
+  - id: 8
+    file: adr-008-represent-domain-errors-as-a-structured-value.md
+    title: "Represent Domain Errors as a Structured Value"
+    description: "Every expected domain or application failure is returned as `{:error, %ErrorMessage{}}` beside the function's success value."
+    applies_to:
+      content_match:
+        - "{:error,"
+        - "ErrorMessage"
+        - "t_res("
+        - "t_ok_res("
+        - "Logger.error"
+        - "Logger.warning"
+
