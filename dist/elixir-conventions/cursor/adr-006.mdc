@@ -1,0 +1,421 @@
+---
+description: "When data is passing through to a downstream sink (export, upload, relay), stream source → transform → sink with a bounded payload working set."
+alwaysApply: false
+---
+
+# ADR-006: Stream Pass-Through Data, Source to Sink
+
+## Context
+
+A server that buffers a payload it is only relaying pays an O(N) memory cost per request for work it is not doing. A 200 MB CSV export loaded into a list before being uploaded to S3 takes 200 MB of process heap that the export does not need; ten concurrent exports take 2 GB. The same export expressed as a source-to-transform-to-sink pipeline keeps a bounded payload working set. That set includes the current source page, the part being assembled, explicitly bounded in-flight parts, and transform and HTTP buffers. Multipart completion also retains small metadata per completed part, bounded by the hard part-count limit, so the claim is bounded payload memory rather than literal O(1) state independent of export size.
+
+The decision is structural: ask whether the algorithm or required interface needs the complete payload materialized or needs random access. Relays, transforms, archives, hashes, counts, extrema, and many validations can operate incrementally with bounded reductions. Database summaries often belong in SQL. Buffer only when the actual operation needs the complete value at once, and put a documented size limit at that boundary.
+
+The Elixir/Erlang ecosystem provides streaming primitives at every layer:
+
+| Source / Sink                  | Tool                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| Database source                | Bounded deterministic keyset/page reads, or a datastore-native export/snapshot |
+| S3 source                      | Application adapter over ExAws download streaming                              |
+| S3 sink                        | Application adapter owning ExAws multipart requests and result normalization   |
+| ZIP assembly                   | `Zstream` (streaming ZIP creation)                                              |
+| CSV assembly                   | `dump_to_stream/1` on a parser module such as `NimbleCSV.RFC4180`               |
+| Inbound multipart upload       | Custom `Plug.Parsers` parser, multipart → storage direct                        |
+| LiveView upload                | `allow_upload/3` with `external:` (browser → storage direct, no proxy through)  |
+
+## Decision
+
+Stream pass-through data with an explicitly bounded payload working set. Buffer only where complete materialization or random access is actually required.
+
+### Rule 1: Stream pass-through data source-to-sink
+
+When the server is relaying, transforming, or assembling data on its way to a downstream sink, write a stream pipeline from source through transform to sink. Do not load the full payload into memory.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Reports do
+  @moduledoc """
+  CSV exports use one page of at most 500 bounded rows, one assembling part of
+  at most 16 MiB + 64 KiB, and at most four in-flight parts per export, plus
+  bounded CSV and HTTP buffers. This policy permits at most 6,400 completed-part
+  metadata entries. Concurrent exports multiply this per-export working set.
+  """
+
+  alias MyApp.{S3, S3Parts}
+  alias MyApp.Reports.{ExportRow, ExportRows}
+
+  @page_rows 500
+  @max_concurrency 4
+
+  @part_policy %S3Parts.Policy{
+    max_object_bytes: 100 * 1024 * 1024 * 1024,
+    max_element_bytes: 64 * 1024,
+    target_part_bytes: 16 * 1024 * 1024,
+    max_part_count: 10_000
+  }
+
+  @spec export_to_s3(pos_integer(), String.t(), String.t()) :: ErrorMessage.t_ok_res()
+  def export_to_s3(org_id, bucket, key) do
+    encoded_rows =
+      org_id
+      |> ExportRows.stream(@page_rows)
+      |> Stream.map(&ExportRow.to_csv_row/1)
+
+    with {:ok, parts} <- S3Parts.chunk(encoded_rows, @part_policy),
+         :ok <- S3.upload_parts(parts, bucket, key, max_concurrency: @max_concurrency) do
+      :ok
+    end
+  end
+end
+```
+
+```elixir
+# lib/my_app/reports/export_rows.ex
+defmodule MyApp.Reports.ExportRows do
+  import Ecto.Query, only: [from: 2]
+
+  alias MyApp.Repo
+  alias MyApp.Reports.ExportRow
+
+  @spec stream(pos_integer(), pos_integer()) :: Enumerable.t()
+  def stream(org_id, page_rows) do
+    Stream.resource(
+      fn -> nil end,
+      fn after_id -> next_page(org_id, after_id, page_rows) end,
+      fn _after_id -> :ok end
+    )
+  end
+
+  defp next_page(org_id, after_id, page_rows) do
+    rows = org_id |> page(after_id, page_rows) |> Repo.all()
+
+    case rows do
+      [] -> {:halt, after_id}
+      rows -> {rows, rows |> List.last() |> Map.fetch!(:id)}
+    end
+  end
+
+  defp page(org_id, nil, page_rows) do
+    from(row in ExportRow,
+      where: row.organization_id == ^org_id,
+      order_by: [asc: row.id],
+      limit: ^page_rows
+    )
+  end
+
+  defp page(org_id, after_id, page_rows) do
+    from(row in ExportRow,
+      where: row.organization_id == ^org_id and row.id > ^after_id,
+      order_by: [asc: row.id],
+      limit: ^page_rows
+    )
+  end
+end
+```
+
+```elixir
+# lib/my_app/s3_parts/policy.ex
+defmodule MyApp.S3Parts.Policy do
+  @enforce_keys [
+    :max_object_bytes,
+    :max_element_bytes,
+    :target_part_bytes,
+    :max_part_count
+  ]
+
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          max_object_bytes: pos_integer(),
+          max_element_bytes: pos_integer(),
+          target_part_bytes: pos_integer(),
+          max_part_count: pos_integer()
+        }
+end
+```
+
+```elixir
+# lib/my_app/s3_parts.ex - shared by every upload in this ADR
+defmodule MyApp.S3Parts do
+  alias MyApp.S3Parts.Policy
+
+  @s3_min_part_bytes 5 * 1024 * 1024
+  @s3_max_part_bytes 5 * 1024 * 1024 * 1024
+  @s3_max_part_count 10_000
+
+  @type part_event :: {:ok, binary()} | {:error, ErrorMessage.t()}
+
+  @doc """
+  Produces tagged multipart events. Every non-final part is at least 5 MiB;
+  every part is at most 5 GiB. The application policy supplies a smaller object
+  ceiling and may supply a smaller part-count ceiling.
+
+  The owned S3 adapter consumes these events, stops on `{:error, error}`, and
+  returns that error after applying its multipart cleanup policy.
+  """
+  @spec chunk(Enumerable.t(), Policy.t()) :: ErrorMessage.t_res(Enumerable.t())
+  def chunk(elements, %Policy{} = policy) do
+    case validate_policy(policy) do
+      :ok -> {:ok, build_stream(elements, policy)}
+      {:error, %ErrorMessage{}} = error -> error
+    end
+  end
+
+  defp build_stream(elements, policy) do
+    Stream.chunk_while(
+      elements,
+      {[], 0, 0, 0, :running},
+      fn element, state -> chunk_element(element, state, policy) end,
+      fn state -> finish(state, policy) end
+    )
+  end
+
+  defp chunk_element(
+         element,
+         {buffer, buffer_bytes, total_bytes, part_count, :running},
+         policy
+       ) do
+    element_bytes = IO.iodata_length(element)
+    next_total = total_bytes + element_bytes
+    next_part_bytes = buffer_bytes + element_bytes
+
+    cond do
+      element_bytes > policy.max_element_bytes ->
+        reject(
+          element_too_large(policy),
+          {buffer, buffer_bytes, total_bytes, part_count, :running}
+        )
+
+      next_total > policy.max_object_bytes ->
+        reject(
+          object_too_large(policy),
+          {buffer, buffer_bytes, total_bytes, part_count, :running}
+        )
+
+      next_part_bytes >= policy.target_part_bytes ->
+        emit_part([buffer, element], next_part_bytes, next_total, part_count, policy)
+
+      true ->
+        {:cont, {[buffer, element], next_part_bytes, next_total, part_count, :running}}
+    end
+  end
+
+  defp chunk_element(_element, state, _policy), do: {:halt, state}
+
+  defp finish({_buffer, _bytes, _total, _parts, :halted} = state, _policy),
+    do: {:cont, state}
+
+  defp finish({_buffer, 0, _total, _parts, :running} = state, _policy),
+    do: {:cont, state}
+
+  defp finish({buffer, bytes, total, parts, :running}, policy),
+    do: emit_part(buffer, bytes, total, parts, policy)
+
+  defp emit_part(buffer, bytes, total, parts, policy) do
+    cond do
+      bytes > @s3_max_part_bytes ->
+        reject(part_too_large(), {buffer, bytes, total, parts, :running})
+
+      parts + 1 > policy.max_part_count ->
+        reject(too_many_parts(policy), {buffer, bytes, total, parts, :running})
+
+      true ->
+        event = {:ok, IO.iodata_to_binary(buffer)}
+        {:cont, event, {[], 0, total, parts + 1, :running}}
+    end
+  end
+
+  defp reject(error, {_buffer, _bytes, total, parts, _status}) do
+    {:cont, {:error, error}, {[], 0, total, parts, :halted}}
+  end
+
+  defp validate_policy(%Policy{} = policy) do
+    cond do
+      policy.max_object_bytes <= 0 ->
+        invalid_policy(:invalid_object_limit)
+
+      policy.max_element_bytes <= 0 ->
+        invalid_policy(:invalid_element_limit)
+
+      policy.target_part_bytes < @s3_min_part_bytes ->
+        invalid_policy(:part_target_below_s3_minimum)
+
+      policy.max_part_count <= 0 ->
+        invalid_policy(:invalid_part_count)
+
+      policy.max_part_count > @s3_max_part_count ->
+        invalid_policy(:part_count_above_s3_maximum)
+
+      policy.target_part_bytes + policy.max_element_bytes > @s3_max_part_bytes ->
+        invalid_policy(:element_can_push_part_above_s3_maximum)
+
+      ceil_div(policy.max_object_bytes, policy.target_part_bytes) > policy.max_part_count ->
+        invalid_policy(:object_limit_requires_too_many_parts)
+
+      true ->
+        :ok
+    end
+  end
+
+  defp ceil_div(dividend, divisor), do: div(dividend + divisor - 1, divisor)
+
+  defp invalid_policy(reason) do
+    {:error,
+     ErrorMessage.internal_server_error(
+       "Multipart upload is not configured safely",
+       %{operation: :multipart_policy, reason: reason}
+     )}
+  end
+
+  defp element_too_large(policy) do
+    ErrorMessage.unprocessable_entity(
+      "An export item exceeds the configured size limit",
+      %{operation: :multipart_upload, max_element_bytes: policy.max_element_bytes}
+    )
+  end
+
+  defp object_too_large(policy) do
+    ErrorMessage.unprocessable_entity(
+      "The export exceeds the configured size limit",
+      %{operation: :multipart_upload, max_object_bytes: policy.max_object_bytes}
+    )
+  end
+
+  defp part_too_large do
+    ErrorMessage.unprocessable_entity(
+      "The export produced an oversized upload part",
+      %{operation: :multipart_upload, max_part_bytes: @s3_max_part_bytes}
+    )
+  end
+
+  defp too_many_parts(policy) do
+    ErrorMessage.unprocessable_entity(
+      "The export requires too many upload parts",
+      %{operation: :multipart_upload, max_part_count: policy.max_part_count}
+    )
+  end
+end
+```
+
+`ExportRows.stream/2` is an enumerable of bounded `Repo.all/2` calls, not an
+Ecto cursor. Each call returns and releases its database checkout before the
+enumerable yields that page to the encoder and S3 adapter. `ExportRow` is a
+bounded projection of only the columns the export needs; it does not preload
+unbounded blobs or associations. `id` is the unique, stable ordering key in
+this example. Paged reads do not imply one database
+snapshot: inserts, updates, and deletes during an export have the consistency
+semantics the application chose. If the export requires a stronger snapshot,
+use a datastore-native export or snapshot as the source. Holding an Ecto cursor
+transaction open across S3 requests only pins the database resource; it cannot
+make an uploaded object participate in that transaction.
+
+`MyApp.S3.upload_parts/4` is an application-owned boundary, not an ExAws
+function. It understands the tagged part stream, sets the supplied
+`max_concurrency` explicitly, calls ExAws operations with non-bang
+`ExAws.request/2`, and normalizes observed failures to ADR-008's ErrorMessage
+contract. It never passes an `{:error, error}` event to S3 as a part body.
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Reports do
+  def export_to_s3(org_id, bucket, key) do
+    records = Repo.all(ExportRow.by_organization(org_id))
+    csv = records |> Enum.map(&to_csv_row/1) |> Enum.join("\n")
+    tmp_path = Path.join(System.tmp_dir!(), "export-#{System.unique_integer()}.csv")
+    File.write!(tmp_path, csv)
+    ExAws.S3.put_object(bucket, key, File.read!(tmp_path)) |> ExAws.request!()
+  end
+end
+```
+
+**Why:** The Wrong version holds the payload in several complete forms. `Repo.all/1` builds a list of decoded structs on the process heap; keeping large live data there increases the cost of collections that scan the generation containing it. `Enum.join/2` then produces one full reference-counted binary. That binary does not have the same heap-scanning cost, but the node still holds the complete export, and concurrent exports multiply it. The temp file adds another full materialization without releasing either in-memory value early enough to establish a bounded pipeline.
+
+S3's multipart limits are part of the producer contract. Parts are 5 MiB through 5 GiB except that the final part may be smaller, and an upload has at most 10,000 parts. A fixed 5 MiB target therefore reaches the part-count ceiling at roughly 48.8 GiB, while one oversized source element can push a part beyond 5 GiB. The Correct policy chooses an application ceiling, a compatible target, an encoded-element ceiling, and a part-count ceiling together. It validates the policy before upload, tracks cumulative bytes and emitted parts during enumeration, and reports a canonical error before exceeding the application limit.
+
+ExAws's high-level stream uploader treats each source binary as one part and defaults to four concurrent upload tasks; it does not re-chunk rows. This ADR therefore makes concurrency explicit even though the owned adapter may use lower-level multipart operations to observe tagged producer failures and retain the upload id. Per export, payload memory consists of one bounded source page, one part being assembled, up to `max_concurrency` in-flight parts, and bounded encoder and HTTP buffers. Concurrent exports multiply that working set. The uploader also keeps small completion metadata such as part numbers and ETags for each completed part, bounded by the hard part-count limit and by 6,400 parts in both shown policies.
+
+The decision remains structural: if the algorithm and sink interface do not require the full payload at once, the payload is not materialized at once. Bounded hashes, counts, extrema, and many validations remain streams or reductions; database summaries normally stay in SQL.
+
+### Rule 2: Stream straight from source to sink when their lifetimes are compatible
+
+When source and sink can remain active together and their interfaces compose, stream directly between them. Do not introduce a gratuitous temp-file step. A deliberate bounded spool is a separate lifetime or interface boundary, not the default data-flow pattern.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Backups do
+  @moduledoc """
+  Archive uploads hold one current snapshot-content chunk, bounded ZIP buffers,
+  one assembling part of at most 32 MiB + 8 MiB, and at most four in-flight
+  parts per archive, plus bounded HTTP buffers. This policy permits at most
+  6,400 completed-part metadata entries. Concurrent archives multiply this
+  working set.
+  """
+
+  alias MyApp.{S3, S3Parts}
+
+  @max_concurrency 4
+
+  @part_policy %S3Parts.Policy{
+    max_object_bytes: 200 * 1024 * 1024 * 1024,
+    max_element_bytes: 8 * 1024 * 1024,
+    target_part_bytes: 32 * 1024 * 1024,
+    max_part_count: 10_000
+  }
+
+  @spec archive_to_s3(Enumerable.t(), String.t(), String.t()) :: ErrorMessage.t_ok_res()
+  def archive_to_s3(snapshots, bucket, key) do
+    archive =
+      snapshots
+      |> Stream.map(&Zstream.entry(&1.relative_path, &1.contents_stream))
+      |> Zstream.zip(zip64: true)
+
+    with {:ok, parts} <- S3Parts.chunk(archive, @part_policy),
+         :ok <- S3.upload_parts(parts, bucket, key, max_concurrency: @max_concurrency) do
+      :ok
+    end
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Backups do
+  def archive_to_s3(snapshots, bucket, key) do
+    tmp = Path.join(System.tmp_dir!(), "archive-#{System.unique_integer()}.zip")
+
+    entries =
+      Enum.map(snapshots, fn snap ->
+        {String.to_charlist(snap.relative_path), snap.contents}
+      end)
+
+    {:ok, _path} = :zip.create(String.to_charlist(tmp), entries)
+
+    ExAws.S3.put_object(bucket, key, File.read!(tmp))
+    |> ExAws.request!(ex_aws_config())
+
+    File.rm(tmp)
+  end
+end
+```
+
+**Why:** The Wrong version materializes the archive repeatedly. It first builds a complete entry list, writes the complete archive, and then `File.read!/1` loads the complete archive before upload. The read-back is a reference-counted binary rather than heap data, but it is still the whole archive resident in the node. For this shown materialize/write/read implementation, the disk step buys no lifetime or interface separation: it adds disk exhaustion, collision, and cleanup failure modes while retaining full-payload memory use.
+
+The Correct version composes compatible lifetimes directly. `Zstream.entry/2` is the public opaque constructor for an entry; callers do not depend on its internal representation. `Zstream.zip/2` emits archive iodata incrementally, and `zip64: true` supports the module's declared ceiling beyond classic ZIP's 4 GiB range. The same multipart policy from Rule 1 bounds ZIP output elements, total bytes, parts, and concurrency before the adapter sends them.
+
+Direct streaming does not remove multipart cleanup duties. Every destination bucket used by this path has an `AbortIncompleteMultipartUpload` lifecycle rule. ExAws's high-level uploader does not abort every terminally failed upload. When immediate reclamation is required, the application adapter owns the explicit multipart lifecycle, retains the upload id, waits for observed in-flight work to settle as required, and calls the documented abort operation on observed failure. The bucket lifecycle rule remains the crash-safe backstop.
+
+A streamed spool is legitimate when direct lifetimes are incompatible, when retries or random access must outlive the source, or when the sink accepts only a path or known length. That component streams both writes and reads, enforces a disk-byte ceiling, creates collision-safe paths, and owns cleanup on success, failure, and crash recovery. It does not call `File.read!/1`, and it does not have the full-payload memory behavior of the Wrong example. The guardrail is against an unowned or unnecessary disk hop, not against deliberate bounded staging.
+
+## Consequences
+
+- Data-flow modules document a pipeline-specific payload ceiling: bounded source pages where applicable, the part being assembled, explicitly bounded in-flight parts, transform and HTTP buffers, and concurrent exports. Small per-part completion metadata is disclosed separately and bounded by the part-count ceiling.
+- Pass-through database reads use bounded deterministic pages that release their checkout before remote sink work, or a datastore-native export/snapshot when the application requires stronger consistency. A database cursor transaction never makes S3 transactional.
+- `Repo.all/2` remains appropriate for one deliberately bounded page and for complete results that genuinely fit in memory and must be materialized. Hashes, counts, extrema, many validations, and SQL summaries are not reasons by themselves to load the full set.
+- Every multipart path declares and enforces its object, element, part-size, part-count, and concurrency ceilings. Every destination bucket has incomplete-upload lifecycle cleanup; adapters needing immediate reclamation own the upload id and observed-failure abort path.
+- Direct source-to-sink streaming is preferred when lifetimes and interfaces compose. A deliberate streamed spool is permitted only with one owner for disk limits, collision-safe paths, streamed reads and writes, and cleanup.
+- The streaming primitives in the Context table are reached for routinely. Adding a new export, upload, or relay path is a stream pipeline, not a buffer-and-dump.
+

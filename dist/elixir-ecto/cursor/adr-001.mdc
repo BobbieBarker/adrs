@@ -1,0 +1,74 @@
+---
+description: "Wrap every database transaction in `Repo.transact/2`, whose callback commits on a final normal `{:ok, _}` and rolls back on a final normal `{:error, _}`."
+alwaysApply: false
+---
+
+# ADR-001: Use Repo.transact for Database Transactions
+
+## Context
+
+`Repo.transaction/2` commits unless something stops it. It runs the function you give it, and if that function returns without raising and without calling `Repo.rollback/1`, the transaction commits whatever the function's return value happens to be. Ecto's own implementation is the clearest statement of this: `transaction/2` wraps your return value in `{:ok, _}` and hands it to `transact/2`, so by the time anything inspects the result, every outcome has been made to look successful.
+
+That is why a normally returned application error is easy to miss. A `with` chain inside `transaction/2` that falls through on `{:error, reason}` returns that tuple, `transaction/2` wraps it into `{:ok, {:error, reason}}`, and the caller receives an `{:ok, _}` even though a later operation failed. Rows written before that returned failure may commit. The returned tuple alone triggers neither rollback nor an exception; logging occurs only if the application adds it. The usual defence is an `else` clause that converts each failure into a `Repo.rollback/1` call, which restores correctness by asking every author to remember it at every call site and reintroduces the `else` block `elixir-conventions` ADR-005 Rule 2 removes.
+
+`Repo.transact/2` inverts the default. It inspects the callback's final normal return: `{:ok, _}` commits, `{:error, _}` rolls back, and anything else raises rather than guessing. Ecto added it in v3.13.0 and soft-deprecated `transaction/2` in the same release. This follows Ecto's current API direction rather than layering a house preference over it; `transaction/2` now carries `@doc deprecated: "Use Repo.transact/2"`.
+
+## Decision
+
+Use `Repo.transact/2` for every database transaction. `Repo.transaction/2` is deprecated and does not appear in new code.
+
+### Rule 1: Wrap transactions in `Repo.transact/2`
+
+Pass `Repo.transact/2` a zero-arity or one-arity function whose final normal result is `{:ok, value}` or `{:error, reason}`. Fallible `<-` steps return normalized result tuples; infallible helpers keep their natural return values. The `with` chain inside is bare because the wrapper reads the failure the chain fell through with (`elixir-conventions` ADR-005 Rule 2). `Repo.rollback/1` remains available when you need to abort with a value the chain did not produce.
+
+**Correct:**
+
+```elixir
+defmodule MyApp.Accounts do
+  alias MyApp.Accounts.User
+  alias MyApp.{Organizations, Repo}
+
+  @spec register(String.t()) :: ErrorMessage.t_res(User.t())
+  def register(email) do
+    Repo.transact(fn ->
+      with {:ok, org} <- Organizations.create(%{name: org_name_from(email)}),
+           {:ok, user} <- create_user(%{email: email, organization_id: org.id}) do
+        {:ok, user}
+      end
+    end)
+  end
+end
+```
+
+**Wrong:**
+
+```elixir
+defmodule MyApp.Accounts do
+  alias MyApp.Accounts.User
+  alias MyApp.{Organizations, Repo}
+
+  @spec register(String.t()) :: {:ok, User.t()} | {:error, term()}
+  def register(email) do
+    Repo.transaction(fn ->
+      with {:ok, org} <- Organizations.create(%{name: org_name_from(email)}),
+           {:ok, user} <- create_user(%{email: email, organization_id: org.id}) do
+        user
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+end
+```
+
+**Why:** The two versions interpret a normal callback return differently. `transact/2` matches on the final result: `{:ok, _}` commits, `{:error, _}` rolls back, and any other normally returned term raises `ArgumentError` with `expected to return {:ok, _} or {:error, _}`. This requirement applies to the callback's final normal result, not every helper it calls: `org_name_from/1` correctly returns a string, while `Organizations.create/1` and `create_user/1` return normalized fallible tuples for `<-`. `transaction/2` does not interpret a normally returned `{:error, reason}` as a rollback request. Ecto wraps the callback's return in a success tuple around `transact/2`, manufacturing success before that commit decision. An exception, an explicit `Repo.rollback/1`, or another abnormal database failure can still stop the transaction; the returned error tuple alone cannot.
+
+That difference is what makes the Wrong version fragile rather than merely verbose. Its `else` clause is load-bearing: delete it and the `with` still compiles, still falls through on `{:error, reason}`, and returns that tuple to `transaction/2`, which wraps it into `{:ok, {:error, reason}}`. What happens to the organization row then depends on how the user step failed. A failure that never reached the database, such as a changeset validation or a policy rejection, leaves the transaction healthy and the COMMIT keeps the organization row that the failed insert was supposed to accompany. A failure that did issue a statement the server rejected, such as a constraint violation, has already aborted the transaction, so the COMMIT commits nothing. Only one of those two is a partial write, but both hand the caller `{:ok, _}` for work that did not happen, and the caller proceeds. The Correct version cannot fail that way, because there is no clause to forget: the bare `with` hands its failure straight to a wrapper whose job is to notice. The success path also stays honest, since `transact/2` returns the function's own `{:ok, user}` rather than nesting it, so callers match one tuple rather than unwrapping two.
+
+## Consequences
+
+- Database transactions call `Repo.transact/2`. `Repo.transaction/2` does not appear in new code, and existing calls are migrated as they are touched.
+- `with` chains inside a transaction are bare. Failures emerge from the helpers already shaped as `{:error, _}` and reach the wrapper unchanged.
+- Only the transaction callback's final normal result must be `{:ok, _}` or `{:error, _}`. Fallible `<-` steps expose normalized result tuples; infallible helpers keep natural values such as strings and maps. A bare final callback value raises rather than committing.
+- `Repo.transact(multi)` returns `{:ok, changes}` on success or `{:error, failed_operation, failed_value, changes_so_far}` on step failure. `changes_so_far` is diagnostic step context, not a partial commit; the transaction's database changes roll back. A public context API promising `ErrorMessage.t_res/1` normalizes that four-tuple after `Repo.transact/1` returns.
+

@@ -124,3 +124,30 @@ adrs:
         - "Agent.start_link"
         - "GenServer.start_link"
         - "Task.start("
+
+  - id: 11
+    file: adr-011-test-otp-code-through-real-processes.md
+    title: "Test OTP Code Through Real Processes"
+    description: "Start every test-scoped fixture or service with start_supervised!/1."
+    applies_to:
+      content_match:
+        - "start_supervised!"
+        - "ExUnit.Case"
+        - ":sys.get_state"
+        - "Sandbox.allow"
+        - "$callers"
+        - "test "
+
+  - id: 12
+    file: adr-012-shape-of-genserver-state.md
+    title: "The Shape of GenServer State"
+    description: "A GenServer's state is a struct in its own module with a fully enumerated @type t, @enforce_keys, and one construction function, never a bare map and never a @typep map type."
+    applies_to:
+      content_match:
+        - "defstruct"
+        - "@enforce_keys"
+        - "State.new"
+        - "%State{"
+        - "defmodule.*State"
+        - "@typep"
+
