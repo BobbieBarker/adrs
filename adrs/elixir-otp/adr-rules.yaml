@@ -151,3 +151,13 @@ adrs:
         - "defmodule.*State"
         - "@typep"
 
+  - id: 13
+    file: adr-013-scope-pubsub-topics-to-the-entity.md
+    title: "Scope PubSub Topics to the Entity, Not the Event Type"
+    description: "When entity processes publish or subscribe through Phoenix.PubSub, put the stable entity key in the topic so the Registry lookup selects interested subscribers before local delivery, rather than making every process filter a shared event-type topic. Publish on state change rather than on a timer."
+    applies_to:
+      content_match:
+        - "PubSub.broadcast"
+        - "PubSub.subscribe"
+        - "Phoenix.PubSub"
+        - "broadcast_from"

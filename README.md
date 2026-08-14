@@ -8,16 +8,17 @@ The rules are grouped into domains. Each domain is a self-contained set with its
 
 | Domain | Covers | ADRs |
 |---|---|---|
-| [`elixir-otp`](adrs/elixir-otp) | OTP, GenServer, supervision, BEAM scheduling, interprocess data, stateful-process testing | 12 |
+| [`elixir-otp`](adrs/elixir-otp) | OTP, GenServer, supervision, BEAM scheduling, interprocess data, message routing, stateful-process testing | 13 |
 | [`elixir-conventions`](adrs/elixir-conventions) | Structural dispatch, runtime algorithm selection, pipeline composition, structs, `with` chains, streaming, effect compensation, structured errors | 8 |
 | [`elixir-ecto`](adrs/elixir-ecto) | Transaction boundaries and the commit contract | 1 |
+| [`elixir-resilience`](adrs/elixir-resilience) | Calls to external services under failure: upstream rate limits, shared backpressure, coordinated recovery | 1 |
 | [`elixir-code-anti-patterns`](adrs/elixir-code-anti-patterns) | The official Elixir code anti-patterns | 10 |
 | [`elixir-design-anti-patterns`](adrs/elixir-design-anti-patterns) | The official Elixir design anti-patterns | 6 |
 | [`elixir-macro-anti-patterns`](adrs/elixir-macro-anti-patterns) | The official Elixir meta-programming anti-patterns | 5 |
 
 ### elixir-otp
 
-Working with GenServer and the BEAM rewards a precise mental model of how they actually behave. The wrong model produces the same predictable production failures: a callback blocks the processing loop, a process hoards state and pays for it in GC pauses, a `cast` pipeline grows an unbounded mailbox, `terminate/2` cleanup is silently skipped on a brutal kill. Humans build the wrong model. LLMs build the wrong model, often more confidently.
+Working with GenServer and the BEAM rewards a precise mental model of how they actually behave. The wrong model produces the same predictable production failures: a callback blocks the processing loop, a process hoards state and pays for it in GC pauses, a `cast` pipeline grows an unbounded mailbox, `terminate/2` cleanup is silently skipped on a brutal kill, and a shared PubSub topic makes message volume quadratic while every receiver looks like it is filtering. Humans build the wrong model. LLMs build the wrong model, often more confidently.
 
 - [ADR-001: Reach for Simpler Primitives Before GenServer](adrs/elixir-otp/adr-001-reach-for-simpler-primitives-before-genserver.md)
 - [ADR-002: Own State in the Process; Separate Transitions From Server Mechanics](adrs/elixir-otp/adr-002-separate-business-logic-from-server-mechanics.md)
@@ -31,6 +32,7 @@ Working with GenServer and the BEAM rewards a precise mental model of how they a
 - [ADR-010: Supervise Every Long-Lived Process](adrs/elixir-otp/adr-010-supervise-long-lived-processes.md)
 - [ADR-011: Test OTP Code Through Real Processes](adrs/elixir-otp/adr-011-test-otp-code-through-real-processes.md)
 - [ADR-012: The Shape of GenServer State](adrs/elixir-otp/adr-012-shape-of-genserver-state.md)
+- [ADR-013: Scope PubSub Topics to the Entity, Not the Event Type](adrs/elixir-otp/adr-013-scope-pubsub-topics-to-the-entity.md)
 
 ### elixir-conventions
 
@@ -55,6 +57,14 @@ Database access decisions. Currently one: the transaction wrapper whose commit i
 inspecting what your callback returned, rather than by whether it happened to raise.
 
 - [ADR-001: Use Repo.transact for Database Transactions](adrs/elixir-ecto/adr-001-use-repo-transact-for-transactions.md)
+
+### elixir-resilience
+
+What happens at the boundary when the other side pushes back. HTTP clients model retry as a
+property of a request, but a rate limit applies to a provider-defined quota bucket. Callers in
+that bucket should share a known cooldown without stopping unrelated traffic.
+
+- [ADR-001: Share Upstream Backpressure Within a Quota Bucket](adrs/elixir-resilience/adr-001-share-upstream-backpressure.md)
 
 ### elixir-code-anti-patterns
 

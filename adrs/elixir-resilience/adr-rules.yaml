@@ -1,0 +1,18 @@
+domain: elixir-resilience
+title: Elixir Resilience / External Services
+description: "ADRs covering calls to external services under failure: upstream rate limits, shared backpressure, and coordinated recovery."
+
+adrs:
+  - id: 1
+    file: adr-001-share-upstream-backpressure.md
+    title: "Share Upstream Backpressure Within a Quota Bucket"
+    description: "When an upstream returns 429, preserve Retry-After and extend a shared deadline keyed by the provider-defined quota bucket before sending another request, instead of retrying independently or imposing one global gate on unrelated traffic."
+    applies_to:
+      content_match:
+        - "retry-after"
+        - "Retry-After"
+        - "max_retries"
+        - "429"
+        - "too_many_requests"
+        - "quota_bucket"
+        - "retry: :transient"
