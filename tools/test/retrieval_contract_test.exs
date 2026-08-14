@@ -88,10 +88,13 @@ defmodule AdrDist.RetrievalContractTest do
     assert is_nil(summary["rule_number"])
     assert is_nil(summary["rule_title"])
     assert is_nil(summary["polarity"])
-    assert summary["context"] =~ "Fixture context."
-    assert summary["decision"] =~ "Direct decision prose."
+    assert summary["context"] == "Fixture context."
+    assert summary["decision"] == "Direct decision prose."
     refute summary["decision"] =~ "def correct"
-    assert summary["consequences"] =~ "Fixture consequence."
+    assert summary["consequences"] == "Fixture consequence."
+    refute summary["context"] =~ "## Context"
+    refute summary["decision"] =~ "## Decision"
+    refute summary["consequences"] =~ "## Consequences"
     assert summary["retrieval_text"] =~ "Preserve complete examples"
     assert summary["retrieval_text"] =~ "Query-shaped routing description."
 
@@ -144,6 +147,46 @@ defmodule AdrDist.RetrievalContractTest do
     assert wrong["source_start_line"] == wrong_label_line
   end
 
+  test "omits an empty direct Decision body while preserving routing and reference lines",
+       context do
+    source =
+      context.source
+      |> String.replace("\nDirect decision prose.\n", "\n")
+      |> String.replace("Fixture context.", "Fixture context. Apply ADR-001 Rule 1.")
+
+    source_path =
+      Path.join([
+        context.source_root,
+        "elixir-fixture",
+        "adr-001-canonical-fixture.md"
+      ])
+
+    File.write!(source_path, source)
+    assert {:ok, _summary} = Build.build(context.source_root, context.output_root)
+
+    [summary | _children] =
+      TestSupport.jsonl!(Path.join([context.output_root, "elixir-fixture", "retrieval.jsonl"]))
+
+    assert summary["decision"] == ""
+    refute summary["display_text"] =~ "## Decision"
+    refute summary["retrieval_text"] =~ "## Decision"
+    assert summary["retrieval_text"] =~ "#### Rule 1: Preserve complete examples"
+
+    assert [reference] = summary["references"]
+    assert reference["target_id"] == "elixir-fixture:adr-001:rule-01"
+    assert reference["raw_text"] == "ADR-001 Rule 1"
+
+    expected_line =
+      source
+      |> String.split("\n", trim: false)
+      |> Enum.find_index(&String.contains?(&1, "Apply ADR-001 Rule 1."))
+      |> Kernel.+(1)
+
+    assert reference["source_line"] == expected_line
+    assert summary["source_sha256"] == TestSupport.sha256(summary["display_text"])
+    assert summary["retrieval_sha256"] == TestSupport.sha256(summary["retrieval_text"])
+  end
+
   test "retains the legacy one-ADR-per-row interface without field changes", context do
     assert {:ok, _summary} = Build.build(context.source_root, context.output_root)
 
@@ -171,6 +214,28 @@ defmodule AdrDist.RetrievalContractTest do
     assert inspect(duplicate_errors) =~ "duplicate"
 
     [first | rest] = records
+
+    assert {:ok, _records} = Retrieval.validate([Map.put(first, "decision", "") | rest])
+
+    assert {:error, missing_section_errors} =
+             Retrieval.validate([Map.delete(first, "decision") | rest])
+
+    assert inspect(missing_section_errors) =~ "sections must be present"
+
+    assert {:error, section_type_errors} =
+             Retrieval.validate([Map.put(first, "decision", nil) | rest])
+
+    assert inspect(section_type_errors) =~ "sections must be strings"
+
+    assert {:error, empty_context_errors} =
+             Retrieval.validate([Map.put(first, "context", "") | rest])
+
+    assert inspect(empty_context_errors) =~ "context must not be empty"
+
+    assert {:error, empty_consequences_errors} =
+             Retrieval.validate([Map.put(first, "consequences", "") | rest])
+
+    assert inspect(empty_consequences_errors) =~ "consequences must not be empty"
 
     assert {:error, hash_errors} =
              Retrieval.validate([
@@ -201,6 +266,18 @@ defmodule AdrDist.RetrievalContractTest do
 
     rule = Enum.find(records, &(&1["record_kind"] == "rule"))
     example = Enum.find(records, &(&1["record_kind"] == "example"))
+
+    invalid_example_id_records =
+      Enum.map(records, fn record ->
+        if record["record_id"] == example["record_id"] do
+          Map.update!(record, "record_id", &String.replace_suffix(&1, ":01", ":02"))
+        else
+          record
+        end
+      end)
+
+    assert {:error, example_id_errors} = Retrieval.validate(invalid_example_id_records)
+    assert inspect(example_id_errors) =~ "example record_id"
 
     invalid_reference = %{
       "target_id" => example["record_id"],

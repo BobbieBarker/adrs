@@ -73,11 +73,59 @@ defmodule AdrDist.ReferencesTest do
     end)
   end
 
+  test "ignores backticked code terms while preserving explicit unknown-domain failures" do
+    content = "The `conn` ADR-009 concern is local to this domain."
+
+    assert {:ok, [reference]} = References.extract(content, "elixir-conventions")
+
+    assert reference_shape(reference) ==
+             {"ADR-009", 1, "elixir-conventions", 9, []}
+
+    known_ids = MapSet.new(["elixir-conventions:adr-009"])
+
+    assert {:ok, [resolved]} =
+             References.resolve(
+               content,
+               "elixir-conventions",
+               known_ids,
+               "elixir-conventions:adr-001:rule-01"
+             )
+
+    assert resolved["target_id"] == "elixir-conventions:adr-009"
+
+    assert {:error, errors} =
+             References.resolve(
+               "See `elixir-unknown` ADR-001.",
+               "elixir-conventions",
+               known_ids,
+               "elixir-conventions:adr-001:rule-01"
+             )
+
+    assert inspect(errors) =~ "elixir-unknown:adr-001"
+  end
+
+  test "requires a left token boundary for unbackticked domain qualifiers" do
+    glued_qualifiers = [
+      {"notelixir-otp ADR-005", 5},
+      {"foo-elixir-unknown ADR-001", 1},
+      {"my_elixir-ecto ADR-002", 2}
+    ]
+
+    Enum.each(glued_qualifiers, fn {content, adr_number} ->
+      assert {:ok, [reference]} = References.extract(content, "elixir-conventions")
+
+      assert reference_shape(reference) ==
+               {"ADR-#{String.pad_leading(Integer.to_string(adr_number), 3, "0")}", 1,
+                "elixir-conventions", adr_number, []}
+    end)
+  end
+
   test "reports unknown domains, ADRs, and Rules during global resolution" do
     known_ids = MapSet.new(["elixir-conventions:adr-001", "elixir-conventions:adr-001:rule-01"])
 
     citations = [
       "elixir-unknown ADR-001",
+      "`elixir-unknown` ADR-001",
       "ADR-999",
       "ADR-001 Rule 99"
     ]

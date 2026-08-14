@@ -18,7 +18,7 @@
       },
       "description": "ADRs codifying the official Elixir code-related anti-patterns: comment overuse, with/else complexity, in-clause extraction, dynamic atoms, parameter lists, namespace trespassing, assertive access, and struct size.",
       "domain": "elixir-code-anti-patterns",
-      "sha256": "61e79a7beb5b337782a4ecbc340266cda5f579f8f037f1c0e801ac0b6b20211d",
+      "sha256": "dd6b8454232e95a85b541863ea2c13cae02e9bb3ab0d123ef9e8603955371bba",
       "title": "Elixir Code Anti-Patterns"
     },
     {
@@ -32,7 +32,7 @@
       },
       "description": "ADRs covering language-level decisions: structural dispatch, runtime algorithm selection, pipeline composition, struct-based domain entities, `with` chain discipline, streaming pass-through data, effect compensation, and structured error values.",
       "domain": "elixir-conventions",
-      "sha256": "fd3bf99c8ab656fa293405d020f24ab184302658cc9a5a42ea5066d3eed13ed5",
+      "sha256": "db1443cb7e225c9e4538e9889bffa90a873847a66cc856c1b556c2ad72621977",
       "title": "Elixir Conventions"
     },
     {
@@ -46,7 +46,7 @@
       },
       "description": "ADRs codifying the official Elixir design-related anti-patterns: return-type consistency, boolean and primitive obsession, exceptions for control flow, unrelated multi-clause functions, and library configuration.",
       "domain": "elixir-design-anti-patterns",
-      "sha256": "fdc9135d671b5be85fee314afe0d044930140076468889262b7be28edcb0dee7",
+      "sha256": "a1df7bb038600898a7d558b806a9a9209389810af909383bff19e82e74cc8e0b",
       "title": "Elixir Design Anti-Patterns"
     },
     {
@@ -60,7 +60,7 @@
       },
       "description": "ADRs covering database access decisions: transaction boundaries and the commit contract.",
       "domain": "elixir-ecto",
-      "sha256": "70682db05b97016ff1236033d7d49262f0d9bb476c950a203a51a6230bba9d17",
+      "sha256": "db27cbcbbad1c0b685611c77334fd42a8e098339f899d026e9243792d50c11d1",
       "title": "Elixir Ecto"
     },
     {
@@ -74,7 +74,7 @@
       },
       "description": "ADRs codifying the official Elixir meta-programming anti-patterns: compile-time dependencies (tracked and untracked), code-generation size, unnecessary macros, and use versus import.",
       "domain": "elixir-macro-anti-patterns",
-      "sha256": "6c0c066b1bfd9c938767d1d682e98d2ec28f885ff1f1525bee7789b76bc37c8c",
+      "sha256": "85a2c8b35a621aa5cbc63016094b149867545f6faf0bc58c9b0f124465c455e7",
       "title": "Elixir Macro Anti-Patterns"
     },
     {
@@ -88,7 +88,7 @@
       },
       "description": "ADRs covering OTP, GenServer, supervision, BEAM scheduling, and stateful-process testing.",
       "domain": "elixir-otp",
-      "sha256": "3caa643df4569feaa8b27cb6134e7afc8634473eefd42fcef4e36eb6e4b016ed",
+      "sha256": "588d4a3238822221b01f314ce1eb8bcc79c7de0682ddb4816e20d4857c446b4a",
       "title": "Elixir OTP / GenServer"
     },
     {
@@ -102,7 +102,7 @@
       },
       "description": "ADRs covering calls to external services under failure: upstream rate limits, shared backpressure, and coordinated recovery.",
       "domain": "elixir-resilience",
-      "sha256": "20eb31c2d3e8912a05041805ffa18c486aeb71211bddcd68f787dbb369f391dc",
+      "sha256": "3f83569e84f64604a5933eb9ae826d67ba5b5db52cf350e6ec56c6e608c311b3",
       "title": "Elixir Resilience / External Services"
     }
   ],

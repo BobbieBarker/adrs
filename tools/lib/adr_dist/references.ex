@@ -18,14 +18,16 @@ defmodule AdrDist.References do
   Extracts domain-aware ADR citations and resolves them to stable retrieval IDs.
 
   Bare ADR numbers resolve inside the source ADR's domain. A citation that names
-  another domain resolves there. Rule-qualified citations resolve to rule IDs;
-  ADR-only citations resolve to ADR IDs. Every resolved target retains the exact
-  citation text and its one-based source line as retrieval evidence.
+  another domain with an explicit `elixir-*` qualifier resolves there; the
+  qualifier may be backticked. Other backticked source terms remain ordinary
+  prose. Rule-qualified citations resolve to rule IDs; ADR-only citations
+  resolve to ADR IDs. Every resolved target retains the exact citation text and
+  its one-based source line as retrieval evidence.
   """
 
   alias AdrDist.References.Reference
 
-  @citation ~r/(?:(`[a-z][a-z0-9-]+`|elixir-[a-z0-9-]+)\s+)?ADR-(\d{3})(?![A-Za-z0-9])(?:\s+Rules?\s+(\d+(?:(?:,\s*(?:and\s+)?|\s+and\s+)\d+)*))?/u
+  @citation ~r/(?:(`elixir-[a-z0-9-]+`|(?<![A-Za-z0-9_-])elixir-[a-z0-9-]+)\s+)?ADR-(\d{3})(?![A-Za-z0-9])(?:\s+Rules?\s+(\d+(?:(?:,\s*(?:and\s+)?|\s+and\s+)\d+)*))?/u
 
   @type extract_error :: {:malformed_reference, pos_integer(), String.t()}
   @type resolution_error :: {:unresolved_reference, String.t(), String.t(), pos_integer()}

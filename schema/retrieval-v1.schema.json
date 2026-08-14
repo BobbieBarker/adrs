@@ -123,11 +123,13 @@
     },
     "source_start_line": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "Inclusive first line of display_text's provenance envelope in source_path. The envelope bounds every source region contributing to display_text; an adr_summary may combine discontiguous regions and omit intervening Rule text from display_text."
     },
     "source_end_line": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "Inclusive last line of display_text's provenance envelope in source_path. The envelope is not a promise that slicing source_path from source_start_line through source_end_line reproduces display_text, and it does not bound routing or parent-context enrichment present only in retrieval_text."
     },
     "languages": {
       "type": "array",
@@ -135,29 +137,32 @@
       "items": {"type": "string", "minLength": 1}
     },
     "source_sha256": {
-      "$ref": "#/$defs/sha256"
+      "$ref": "#/$defs/sha256",
+      "description": "Lowercase SHA-256 of the exact UTF-8 bytes of display_text, not necessarily of every source_path line inside the provenance envelope."
     },
     "retrieval_sha256": {
-      "$ref": "#/$defs/sha256"
+      "$ref": "#/$defs/sha256",
+      "description": "Lowercase SHA-256 of the exact UTF-8 bytes of retrieval_text."
     },
     "references": {
       "type": "array",
       "items": {"$ref": "#/$defs/reference"}
     },
     "retrieval_text": {
-      "$ref": "#/$defs/nonEmptyString"
+      "$ref": "#/$defs/nonEmptyString",
+      "description": "Search-oriented text that may add routing metadata or parent and Rule context outside display_text's provenance envelope."
     },
     "display_text": {
       "$ref": "#/$defs/nonEmptyString"
     },
     "context": {
-      "type": "string"
+      "$ref": "#/$defs/nonEmptyString"
     },
     "decision": {
       "type": "string"
     },
     "consequences": {
-      "type": "string"
+      "$ref": "#/$defs/nonEmptyString"
     }
   },
   "allOf": [
@@ -262,7 +267,8 @@
     },
     "recordId": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}(?::example:(?:correct|wrong):[0-9]{2})?|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$"
+      "description": "Stable v1 record identifier. Each Rule has exactly one Correct and one Wrong example record, so their per-polarity example index is 01.",
+      "pattern": "^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}(?::example:(?:correct|wrong):01)?|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$"
     },
     "reference": {
       "type": "object",

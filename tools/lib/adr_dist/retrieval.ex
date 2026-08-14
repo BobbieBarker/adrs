@@ -91,10 +91,13 @@ defmodule AdrDist.Retrieval do
 
   defp summary_record(%Adr{} = adr) do
     record_id = Adr.stable_id(adr)
-    context = Markdown.section_content(adr.document.context)
-    decision = Markdown.section_content(adr.document.decision)
-    consequences = Markdown.section_content(adr.document.consequences)
-    display_text = Enum.join([context, decision, consequences], "\n\n")
+    context = Markdown.section_body(adr.document.context)
+    decision = Markdown.section_body(adr.document.decision)
+    consequences = Markdown.section_body(adr.document.consequences)
+    context_text = summary_section_text(adr.document.context, context)
+    decision_text = summary_section_text(adr.document.decision, decision)
+    consequences_text = summary_section_text(adr.document.consequences, consequences)
+    display_text = retrieval_join([context_text, decision_text, consequences_text])
 
     rule_headings =
       adr.document.rules
@@ -109,9 +112,9 @@ defmodule AdrDist.Retrieval do
         "Routing title: #{adr.title}",
         "Routing description: #{adr.description}",
         "Source description: #{source_description(adr)}",
-        context,
-        decision,
-        consequences,
+        context_text,
+        decision_text,
+        consequences_text,
         if(rule_headings == "", do: nil, else: "Rule headings:\n#{rule_headings}")
       ])
 
@@ -133,9 +136,10 @@ defmodule AdrDist.Retrieval do
       "decision" => decision,
       "consequences" => consequences,
       "__reference_regions__" => [
-        {context, adr.document.context.start_line},
-        {decision, adr.document.decision.start_line},
-        {consequences, adr.document.consequences.start_line}
+        {Markdown.section_content(adr.document.context), adr.document.context.start_line},
+        {Markdown.section_content(adr.document.decision), adr.document.decision.start_line},
+        {Markdown.section_content(adr.document.consequences),
+         adr.document.consequences.start_line}
       ]
     })
   end
@@ -526,10 +530,7 @@ defmodule AdrDist.Retrieval do
             "ADR summary rule_title must be nil"
           )
           |> error_if(not is_nil(Map.get(record, "polarity")), "ADR summary polarity must be nil")
-          |> error_if(
-            Enum.any?(@summary_fields, &(not non_empty_string?(Map.get(record, &1)))),
-            "ADR summary sections must be present"
-          )
+          |> Kernel.++(summary_section_errors(record))
 
         "supporting" ->
           []
@@ -583,7 +584,7 @@ defmodule AdrDist.Retrieval do
           |> error_if(
             not (is_binary(rule_id) and is_binary(record_id) and
                    Regex.match?(
-                     ~r/^#{Regex.escape(rule_id)}:example:#{expected_kind}:[0-9]{2}$/,
+                     ~r/^#{Regex.escape(rule_id)}:example:#{expected_kind}:01$/,
                      record_id
                    )),
             "example record_id does not match its polarity"
@@ -768,6 +769,35 @@ defmodule AdrDist.Retrieval do
     |> Enum.join("\n\n")
   end
 
+  defp summary_section_text(_section, ""), do: nil
+
+  defp summary_section_text(%Section{} = section, _body) do
+    Markdown.section_content(section)
+  end
+
+  defp summary_section_errors(record) do
+    missing = Enum.any?(@summary_fields, &(not Map.has_key?(record, &1)))
+
+    invalid_type =
+      Enum.any?(@summary_fields, fn field ->
+        Map.has_key?(record, field) and not is_binary(Map.get(record, field))
+      end)
+
+    []
+    |> error_if(missing, "ADR summary sections must be present")
+    |> error_if(invalid_type, "ADR summary sections must be strings")
+    |> error_if(
+      is_binary(Map.get(record, "context")) and
+        not non_empty_string?(Map.get(record, "context")),
+      "ADR summary context must not be empty"
+    )
+    |> error_if(
+      is_binary(Map.get(record, "consequences")) and
+        not non_empty_string?(Map.get(record, "consequences")),
+      "ADR summary consequences must not be empty"
+    )
+  end
+
   defp without_document_title([_document_title | rest]), do: rest
   defp without_document_title([]), do: []
 
@@ -815,7 +845,7 @@ defmodule AdrDist.Retrieval do
 
   defp valid_record_id?(value) when is_binary(value) do
     Regex.match?(
-      ~r/^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}(?::example:(?:correct|wrong):[0-9]{2})?|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$/,
+      ~r/^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}(?::example:(?:correct|wrong):01)?|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$/,
       value
     )
   end

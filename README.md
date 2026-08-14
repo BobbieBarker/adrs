@@ -165,7 +165,11 @@ New retrievers should consume `dist/<domain>/retrieval.jsonl`. It is a model-neu
 - `example` makes Correct and Wrong code independently searchable while retaining explicit positive or negative polarity. Its `hydrate_id` points back to the complete Rule.
 - `supporting` preserves useful Decision subsections that are not numbered Rules.
 
+The v1 Rule authoring grammar has exactly one `Correct`, one `Wrong`, and one `Why` region, in that order. A Correct or Wrong region may contain multiple fenced snippets, prose between those fences, and deeper Markdown headings; those pieces remain one example region. Repeating a Correct, Wrong, or Why label is rejected, and the generated Correct and Wrong record IDs therefore end in the per-polarity index `:01`.
+
 The v1 contract is published as `schema/retrieval-v1.schema.json`, and `dist/retrieval-catalog.json` inventories every domain artifact with counts and SHA-256 checksums. Stable semantic `record_id` values support deterministic lookup for explicit citations such as `elixir-otp` ADR-005 Rule 2; content hashes report change, but are never identifiers. Future incompatible retrieval changes require a new schema and artifact name or an explicit migration; they must not silently redefine `retrieval-v1` semantics.
+
+For every record, `source_start_line` and `source_end_line` are the inclusive provenance envelope containing the source regions that contributed to `display_text`. Rule, example, and supporting `display_text` each draw from one contiguous source region; an `adr_summary` combines Context, direct Decision prose, and Consequences, so its contributing regions may be discontiguous and its envelope may contain intervening Rule text absent from `display_text`. `retrieval_text` may add routing metadata, parent Context, a Rule statement, or Why text outside that display envelope; the source line fields do not claim to bound those search-only enrichments. `source_sha256` is the SHA-256 of the exact UTF-8 bytes of `display_text`, not a hash of every source line in that envelope. `retrieval_sha256` likewise hashes the exact UTF-8 bytes of `retrieval_text`.
 
 A recommended retrieval flow is:
 
@@ -198,7 +202,7 @@ The `applies_to` shape (`paths` globs and `content_match` substrings) is the sam
 
 ### Obsidian + qmd / ClawVault
 
-The ADRs use vault-conformant frontmatter (`type: adr`, `id`, `title`, `status`, `date`, `tags`, `description`). Clone the repo into your vault's directory and existing semantic-retrieval tooling will index them.
+The ADRs use vault-conformant frontmatter (`type: adr`, `id`, `title`, `status`, `date`, `tags`, `description`). ISO `date` and optional `updated` values are intentionally quoted so YAML readers retain `YYYY-MM-DD` strings rather than implicitly converting them to date objects. Clone the repo into your vault's directory and existing semantic-retrieval tooling will index them.
 
 ## Repo layout
 

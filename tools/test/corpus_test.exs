@@ -68,6 +68,23 @@ defmodule AdrDist.CorpusTest do
     assert count_kind(records, "example") == 226
     assert count_kind(records, "supporting") == 2
 
+    summaries = Enum.filter(records, &(&1["record_kind"] == "adr_summary"))
+    assert Enum.count(summaries, &(&1["decision"] == "")) == 30
+
+    Enum.each(summaries, fn summary ->
+      assert String.trim(summary["context"]) != ""
+      assert is_binary(summary["decision"])
+      assert String.trim(summary["consequences"]) != ""
+      refute String.starts_with?(summary["context"], "## Context")
+      refute String.starts_with?(summary["decision"], "## Decision")
+      refute String.starts_with?(summary["consequences"], "## Consequences")
+
+      if summary["decision"] == "" do
+        refute Regex.match?(~r/(?:^|\n)## Decision(?:\n|$)/, summary["display_text"])
+        refute Regex.match?(~r/(?:^|\n)## Decision(?:\n|$)/, summary["retrieval_text"])
+      end
+    end)
+
     ids = Enum.map(records, & &1["record_id"])
     assert length(ids) == MapSet.size(MapSet.new(ids))
 
@@ -110,7 +127,7 @@ defmodule AdrDist.CorpusTest do
     Enum.each(examples, fn example ->
       assert example["parent_id"] == example["hydrate_id"]
       assert String.starts_with?(example["parent_id"], "#{example["domain"]}:adr-")
-      assert example["record_id"] =~ ~r/:example:(?:correct|wrong):\d{2}$/
+      assert example["record_id"] =~ ~r/:example:(?:correct|wrong):01$/
     end)
 
     rules = Enum.filter(records, &(&1["record_kind"] == "rule"))

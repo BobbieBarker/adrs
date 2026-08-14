@@ -60,6 +60,9 @@ defmodule AdrDist.MarkdownTest do
     assert {:ok, document} = Markdown.parse(body)
     assert document.title == "ADR-001: Fixture"
     assert Enum.map(document.supporting, & &1.title) == ["Decision test"]
+    assert Markdown.section_body(document.context) == "Fixture context."
+    assert Markdown.section_body(document.decision) == "Direct decision prose."
+    assert Markdown.section_body(document.consequences) == "Fixture consequence."
 
     assert [rule] = document.rules
     assert rule.number == 1

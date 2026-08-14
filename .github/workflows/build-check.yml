@@ -21,6 +21,9 @@ jobs:
           otp-version: "27"
           elixir-version: ${{ matrix.elixir }}
 
+      - name: Check Elixir formatting
+        run: mix format --check-formatted
+
       - name: Cache Mix.install deps
         uses: actions/cache@v4
         with:

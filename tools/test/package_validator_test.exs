@@ -74,6 +74,65 @@ defmodule AdrDist.PackageValidatorTest do
            )
   end
 
+  test "accepts an empty direct Decision but rejects malformed summary fields and example indexes",
+       context do
+    retrieval_path =
+      Path.join([
+        context.repo_root,
+        "dist",
+        "elixir-code-anti-patterns",
+        "retrieval.jsonl"
+      ])
+
+    records = TestSupport.jsonl!(retrieval_path)
+    summary = Enum.find(records, &(&1["record_kind"] == "adr_summary"))
+    assert summary["decision"] == ""
+    assert {:ok, _stats} = PackageValidator.validate(context.repo_root)
+
+    without_decision =
+      Enum.map(records, fn record ->
+        if record["record_id"] == summary["record_id"],
+          do: Map.delete(record, "decision"),
+          else: record
+      end)
+
+    write_jsonl!(retrieval_path, without_decision)
+    assert {:error, missing_errors} = PackageValidator.validate(context.repo_root)
+    assert Enum.any?(missing_errors, &String.contains?(&1, "missing fields: decision"))
+
+    non_string_decision =
+      Enum.map(records, fn record ->
+        if record["record_id"] == summary["record_id"],
+          do: Map.put(record, "decision", nil),
+          else: record
+      end)
+
+    write_jsonl!(retrieval_path, non_string_decision)
+    assert {:error, type_errors} = PackageValidator.validate(context.repo_root)
+
+    assert Enum.any?(
+             type_errors,
+             &String.contains?(&1, "summary decision must be a string")
+           )
+
+    example = Enum.find(records, &(&1["record_kind"] == "example"))
+
+    invalid_example_index =
+      Enum.map(records, fn record ->
+        if record["record_id"] == example["record_id"],
+          do: Map.update!(record, "record_id", &String.replace_suffix(&1, ":01", ":02")),
+          else: record
+      end)
+
+    write_jsonl!(retrieval_path, invalid_example_index)
+    assert {:error, example_errors} = PackageValidator.validate(context.repo_root)
+
+    assert Enum.any?(
+             example_errors,
+             &String.contains?(&1, "example record_id must be")
+           )
+  end
+
   defp write_jsonl!(path, rows) do
     File.write!(path, Enum.map_join(rows, "\n", &Jason.encode!/1) <> "\n")
   end

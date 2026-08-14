@@ -348,6 +348,7 @@ defmodule AdrDist.Source do
         {leading_blank, content_lines} = Enum.split_while(body_lines, &(String.trim(&1) == ""))
         body = Enum.join(content_lines, "\n")
         line_offset = closing_index + 2 + length(leading_blank)
+
         case YamlElixir.read_from_string(frontmatter_text) do
           {:ok, frontmatter} when is_map(frontmatter) ->
             {:ok, frontmatter, body, line_offset}

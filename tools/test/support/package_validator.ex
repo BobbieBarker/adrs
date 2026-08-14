@@ -355,7 +355,7 @@ defmodule AdrDist.PackageValidator do
     |> add_if(not is_nil(record["rule_title"]), "#{prefix} summary rule_title must be null")
     |> add_if(not is_nil(record["polarity"]), "#{prefix} summary polarity must be null")
     |> add_if(not nonempty_string?(record["context"]), "#{prefix} summary context is required")
-    |> add_if(not nonempty_string?(record["decision"]), "#{prefix} summary decision is required")
+    |> add_if(not is_binary(record["decision"]), "#{prefix} summary decision must be a string")
     |> add_if(
       not nonempty_string?(record["consequences"]),
       "#{prefix} summary consequences are required"
@@ -420,7 +420,7 @@ defmodule AdrDist.PackageValidator do
     )
     |> add_if(not is_integer(record["rule_number"]), "#{prefix} example rule_number is required")
     |> add_if(
-      not Regex.match?(~r/:example:(?:correct|wrong):\d{2}$/, record["record_id"] || ""),
+      not Regex.match?(~r/:example:(?:correct|wrong):01$/, record["record_id"] || ""),
       "#{prefix} example record_id is invalid"
     )
     |> summary_only_field_errors(record, prefix)
@@ -958,7 +958,7 @@ defmodule AdrDist.PackageValidator do
 
   defp valid_record_id?(value) when is_binary(value) do
     Regex.match?(
-      ~r/^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}(?::example:(?:correct|wrong):[0-9]{2})?|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$/,
+      ~r/^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}(?::example:(?:correct|wrong):01)?|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$/,
       value
     )
   end

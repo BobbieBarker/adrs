@@ -70,7 +70,9 @@ defmodule AdrDist.Validator do
     errors = Enum.flat_map(domains, &legacy_domain_errors(staging_root, &1))
 
     case errors do
-      [] -> :ok
+      [] ->
+        :ok
+
       _ ->
         {:error,
          Error.new(:legacy_validation_failed, "staged legacy adrs.jsonl is invalid",
@@ -205,8 +207,11 @@ defmodule AdrDist.Validator do
 
   defp read_jsonl(path) do
     case File.read(path) do
-      {:ok, contents} -> decode_jsonl(contents, path)
-      {:error, reason} -> {:error, Exception.message(%File.Error{reason: reason, action: "read", path: path})}
+      {:ok, contents} ->
+        decode_jsonl(contents, path)
+
+      {:error, reason} ->
+        {:error, Exception.message(%File.Error{reason: reason, action: "read", path: path})}
     end
   end
 

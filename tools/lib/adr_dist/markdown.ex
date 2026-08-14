@@ -131,6 +131,11 @@ defmodule AdrDist.Markdown do
     section.display_text
   end
 
+  @spec section_body(Section.t()) :: String.t()
+  def section_body(%Section{} = section) do
+    String.trim(section.body)
+  end
+
   @spec rule_content(Rule.t()) :: String.t()
   def rule_content(%Rule{} = rule) do
     [rule.heading, rule.statement, "**Why:** " <> rule.why]
@@ -360,8 +365,7 @@ defmodule AdrDist.Markdown do
             "H3 Rules must be direct Decision children; H4 Rules must be under Universal rules or Situational rules"
           end
 
-        {:error,
-         {:invalid_markdown, section.start_line, message}}
+        {:error, {:invalid_markdown, section.start_line, message}}
     end
   end
 
@@ -373,7 +377,9 @@ defmodule AdrDist.Markdown do
     case section.path do
       path when length(path) == length(decision.path) + 2 ->
         parent = Enum.at(path, -2)
-        List.starts_with?(path, decision.path) and parent in ["Universal rules", "Situational rules"]
+
+        List.starts_with?(path, decision.path) and
+          parent in ["Universal rules", "Situational rules"]
 
       _path ->
         false
