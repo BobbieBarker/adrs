@@ -3,7 +3,7 @@ type: adr
 id: 6
 title: "Using application configuration for libraries"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, configuration, library-design, application-environment, supervision]
 description: "A library that reads its own configuration from the application environment exposes a single node-global value per key, so every consumer and every call site is locked into one behavior. Take configuration as function arguments, consumer-owned child specs, or required options on `use` instead."
 ---

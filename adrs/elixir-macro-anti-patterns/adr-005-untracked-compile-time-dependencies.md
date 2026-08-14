@@ -3,7 +3,7 @@ type: adr
 id: 5
 title: "Untracked compile-time dependencies"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, compile-time-dependencies, metaprogramming, recompilation]
 description: "Building module names programmatically with Module.concat/2 or raw atoms hides the alias from the compiler's dependency tracker, so dependent files are not recompiled when the target module changes and the build silently goes stale. Write module names as literal aliases, or construct them inside a macro so the alias enters the AST at expansion time."
 ---

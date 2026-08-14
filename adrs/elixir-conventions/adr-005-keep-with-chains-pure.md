@@ -3,8 +3,8 @@ type: adr
 id: 5
 title: Keep `with` Chains Pure
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, control-flow, with, error-handling, fallible-chains]
 description: "Inside a `with` chain, every clause uses `<-` with a refutable success pattern. Plain `=` matches never participate in fall-through, and an irrefutable `value <- operation()` is the same smuggling in different syntax. Avoid `else`; normalize return shapes in called functions. Use `with` only when two or more fallible steps compose; return one unchanged result directly, use `case` to transform one result, and use pipelines for pure transformations."
 ---

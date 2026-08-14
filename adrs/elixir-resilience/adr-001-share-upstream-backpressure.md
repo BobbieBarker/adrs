@@ -3,7 +3,7 @@ type: adr
 id: 1
 title: "Share Upstream Backpressure Within a Quota Bucket"
 status: accepted
-date: 2026-08-13
+date: '2026-08-13'
 tags: [elixir, resilience, http, rate-limiting, backpressure, retry, finch, connection-pool]
 description: "A 429 is evidence about a provider-defined quota bucket, whose scope may be a credential, tenant, resource, endpoint, or wider client identity. Preserve Retry-After in the structured error and extend a shared deadline keyed by that bucket before sending another request, instead of making each request independently rediscover a known cooldown."
 ---

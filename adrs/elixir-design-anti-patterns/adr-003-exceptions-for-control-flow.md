@@ -3,7 +3,7 @@ type: adr
 id: 3
 title: "Exceptions for control-flow"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, error-handling, control-flow, library-design]
 description: "Driving expected control flow through raise and try/rescue captures a stacktrace and unwinds the stack on the normal path, and a rescue clause cannot tell an anticipated error from an unrelated bug it silently absorbs. Match result tuples with case, and have library functions return {:ok, value} | {:error, reason} with a bang variant built on top."
 ---

@@ -9,8 +9,8 @@ type: adr
 id: 1
 title: Reach for Simpler Primitives Before GenServer
 status: accepted
-date: 2026-04-17
-updated: 2026-08-09
+date: '2026-04-17'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, concurrency, architecture]
 description: A GenServer is a long-lived OTP process that serializes its own message handling. Use it when that serialization, exclusive ownership, or long-lived coordination is required; otherwise default to a plain module, Agent, Task, Registry, or ETS.
 ---
@@ -365,8 +365,8 @@ type: adr
 id: 2
 title: Own State in the Process; Separate Transitions From Server Mechanics
 status: accepted
-date: 2026-04-17
-updated: 2026-08-09
+date: '2026-04-17'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, architecture, state-ownership, testing]
 description: "The process owns its state and the non-interleaving application of transitions against it. A process API publishes transitions and queries, never `get_state`, `replace_state`, or `update_state`, which turn one process-owned transition into a caller-side read-modify-write. Every GenServer splits into three modules across three files (API, Server, Impl), where Impl holds the subsystem's state transitions and policy, vendor translation, persistence, and lifecycle-and-correlation live in named sibling modules that each take the slice of state they own."
 ---
@@ -765,8 +765,8 @@ type: adr
 id: 3
 title: Keep GenServer State Small; Push Storage Out of Process
 status: accepted
-date: 2026-04-18
-updated: 2026-08-09
+date: '2026-04-18'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, performance, state, gc]
 description: "Garbage collection on the BEAM is proportional to the live data on the heap being collected, and the callers of a GenServer wait through that collection. Keep a value in process state only when an invariant the mailbox serializes requires the process to own it and its size is independent of usage. A per-aggregate collection inside a singleton is storage even when every entry is individually capped."
 ---
@@ -1239,8 +1239,8 @@ type: adr
 id: 4
 title: Never Block the GenServer Processing Loop
 status: accepted
-date: 2026-04-22
-updated: 2026-08-09
+date: '2026-04-22'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, performance, callbacks]
 description: GenServer callbacks handle one message at a time. Blocking I/O or unbounded computation in a callback stalls every other caller. Raising the call timeout papers over the problem instead of fixing it.
 ---
@@ -1356,8 +1356,8 @@ type: adr
 id: 5
 title: Get Slow Work Off the Processing Loop
 status: accepted
-date: 2026-04-22
-updated: 2026-08-09
+date: '2026-04-22'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, handle-continue, task, async, state-ownership]
 description: "Slow I/O and unbounded computation belong in supervised concurrent work, not in a GenServer callback. handle_continue provides bounded post-init sequencing but still runs on the processing loop. For asynchronous calls, assign exactly one component to reply on every terminal path. Moving work off the loop does not move state ownership: the task computes and the owning process decides."
 ---
@@ -1774,8 +1774,8 @@ type: adr
 id: 6
 title: Use GenStage for Producer-Consumer Pipelines
 status: accepted
-date: 2026-04-29
-updated: 2026-08-09
+date: '2026-04-29'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, backpressure, genstage, broadway, flow]
 description: When one process produces work faster than another consumes it, use GenStage, Flow, or Broadway. Do not build pipelines on naked cast.
 ---
@@ -1899,8 +1899,8 @@ type: adr
 id: 7
 title: Design GenServers for Test Isolation
 status: accepted
-date: 2026-04-29
-updated: 2026-08-09
+date: '2026-04-29'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, testing, dependency-injection]
 description: "Every GenServer accepts a configurable :name, validates its opts at start with NimbleOptions, and converts those opts into state exactly once through a State module constructor. When the server has substitutable collaborators, inject them via opts. When it owns storage whose contract is a cache, use a cache library with a sandbox adapter; inject other purpose-built stores through Deps. Mox is reserved for collaborators the test cannot start, such as HTTP APIs and third-party SDKs."
 ---
@@ -2211,8 +2211,8 @@ type: adr
 id: 8
 title: Graceful Shutdown Requires trap_exit and a Realistic :shutdown
 status: accepted
-date: 2026-04-22
-updated: 2026-08-09
+date: '2026-04-22'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, shutdown, supervision]
 description: "trap_exit gives a worker an opportunity for bounded, best-effort cleanup during ordinary supervisor shutdown; it does not guarantee cleanup starts or finishes. Give worker children realistic finite shutdown budgets, normally leave supervisor children at :infinity, and make critical writes durable before acknowledgment rather than at shutdown."
 ---
@@ -2402,7 +2402,7 @@ type: adr
 id: 9
 title: "Send Minimal Data Between Processes"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 updated: '2026-08-14'
 tags: [elixir, anti-pattern, processes, message-passing, performance, memory]
 description: "Same-node BEAM messages copy ordinary term structure into receiver-owned storage, although reference-counted binaries and literals are shared and queued data may remain off-heap. A closure carries the variables it captures, not only the field it later reads. Send only the fields a process needs, or let it fetch its own data."
@@ -2500,7 +2500,7 @@ type: adr
 id: 10
 title: "Supervise Every Long-Lived Process"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 updated: '2026-08-12'
 tags: [elixir, anti-pattern, otp, supervision, processes, fault-tolerance]
 description: "A process started outside a supervision tree has no restart strategy, no deterministic start or shutdown ordering, and is invisible to observer-based introspection because supervisors are the BEAM's lifecycle owners. Start every long-lived process as a static supervisor child, and every runtime-created one under a DynamicSupervisor."
@@ -2596,8 +2596,8 @@ type: adr
 id: 11
 title: Test OTP Code Through Real Processes
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, otp, testing, sys, sql-sandbox, callers]
 description: "Start every test-scoped fixture or service with start_supervised!/1. Test a state transition directly as a function; use a real supervised process when the behavior's meaning depends on ordering, serialized state transitions, timers, monitors, task correlation, registration, supervision, or shutdown, and never create an Impl module just to make a test process-free. :sys.replace_state/2 is prohibited on every process, including the ones your application owns, and :sys.get_state/2 is permitted only as a discarded-value mailbox barrier for prior messages the same test process sent to the same live PID. application.ex starts the same supervision tree in every environment. Reach a sandboxed data store from a spawned process through a $callers-propagating Task primitive, or grant a dedicated process access with Sandbox.allow/3."
 ---
@@ -2900,8 +2900,8 @@ type: adr
 id: 12
 title: The Shape of GenServer State
 status: accepted
-date: 2026-08-02
-updated: 2026-08-09
+date: '2026-08-02'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, state, structs, types, composition]
 description: "A GenServer's state is a struct in its own module with a fully enumerated @type t, @enforce_keys, and one construction function, never a bare map and never a @typep map type. Configuration, injected collaborators, and changing concerns have distinct homes, and each concern's module owns its transitions. The state struct is an architectural boundary; no accessor exists so a caller or test can read live fields."
 ---
@@ -3300,7 +3300,7 @@ type: adr
 id: 13
 title: "Scope PubSub Topics to the Entity, Not the Event Type"
 status: accepted
-date: 2026-08-13
+date: '2026-08-13'
 tags: [elixir, otp, pubsub, message-passing, performance, scheduling]
 description: "Phoenix.PubSub sends once for each local subscription entry on a topic. When every entity both publishes to and subscribes to one event-type topic, delivery volume grows as N² even though each receiver discards the messages for other entities. Put the entity identifier in the topic so Registry lookup selects the interested subscribers before local delivery, and publish on state change rather than on a timer so the broadcast rate carries information."
 ---

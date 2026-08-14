@@ -3,8 +3,8 @@ type: adr
 id: 3
 title: Keep GenServer State Small; Push Storage Out of Process
 status: accepted
-date: 2026-04-18
-updated: 2026-08-09
+date: '2026-04-18'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, performance, state, gc]
 description: "Garbage collection on the BEAM is proportional to the live data on the heap being collected, and the callers of a GenServer wait through that collection. Keep a value in process state only when an invariant the mailbox serializes requires the process to own it and its size is independent of usage. A per-aggregate collection inside a singleton is storage even when every entry is individually capped."
 ---

@@ -3,8 +3,8 @@ type: adr
 id: 8
 title: Graceful Shutdown Requires trap_exit and a Realistic :shutdown
 status: accepted
-date: 2026-04-22
-updated: 2026-08-09
+date: '2026-04-22'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, shutdown, supervision]
 description: "trap_exit gives a worker an opportunity for bounded, best-effort cleanup during ordinary supervisor shutdown; it does not guarantee cleanup starts or finishes. Give worker children realistic finite shutdown budgets, normally leave supervisor children at :infinity, and make critical writes durable before acknowledgment rather than at shutdown."
 ---

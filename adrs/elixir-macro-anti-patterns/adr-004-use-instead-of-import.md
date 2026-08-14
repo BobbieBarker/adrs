@@ -3,7 +3,7 @@ type: adr
 id: 4
 title: "`use` instead of `import`"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, use, code-generation, modularity]
 description: "`use M` expands at compile time to `M.__using__/1`, whose quoted body is injected verbatim into the caller, hiding propagated imports, behaviours, and definitions and creating compile-time dependencies. Prefer lexically scoped `import`/`alias` when no code injection is required."
 ---

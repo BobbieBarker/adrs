@@ -3,8 +3,8 @@ type: adr
 id: 1
 title: Structural Dispatch Over Imperative Branching
 status: accepted
-date: 2026-05-06
-updated: 2026-08-09
+date: '2026-05-06'
+updated: '2026-08-09'
 tags: [elixir, control-flow, pattern-matching, dispatch, idioms]
 description: "Every branching construct in Elixir fits one shape of discriminator: argument shape goes in the function head, guard-safe predicates go in guards, dependent fallible steps go in `with`, ordered non-guard-safe predicates go in `cond`, a value the function just computed goes in `case`, and `if` handles one two-way non-guard-safe predicate or inline value selection. Six rules name the discriminator each construct answers to."
 ---

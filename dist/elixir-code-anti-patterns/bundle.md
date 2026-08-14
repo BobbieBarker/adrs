@@ -9,7 +9,7 @@ type: adr
 id: 1
 title: "Comments overuse"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, comments, documentation, readability, naming]
 description: "Comments that restate self-explanatory code rot because the Elixir tokenizer discards them and nothing checks them against the code. Replace them with expressive names and module attributes, and move real contracts into `@doc`/`@moduledoc`, which compile into the BEAM Docs chunk and are testable as doctests."
 ---
@@ -112,7 +112,7 @@ type: adr
 id: 2
 title: "Complex `else` clauses in `with`"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, with, error-handling, control-flow, readability]
 description: "A `with` expression's single `else` block flattens the failures of every `<-` clause into one place, stripping the provenance of which clause failed and letting structurally similar errors collapse into the wrong catch-all. Normalize each step's return in a private function so `with` expresses only the success path."
 ---
@@ -188,7 +188,7 @@ type: adr
 id: 3
 title: "Complex extractions in clauses"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, pattern-matching, multi-clause, readability, functions]
 description: "A multi-clause function head should bind only the variables its patterns and guards use to select a clause. Extracting body-only struct or map fields in the head hides which bindings actually drive dispatch, because nothing distinguishes a selection variable from local plumbing in the signature."
 ---
@@ -249,7 +249,7 @@ type: adr
 id: 4
 title: "Dynamic atom creation"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, atoms, memory, security, input-validation]
 description: "Converting uncontrolled external strings to atoms with String.to_atom/1 leaks atoms, which are never garbage collected and are capped at 1,048,576 per node. Map a fixed set with pattern matching, or guard open input with String.to_existing_atom/1."
 ---
@@ -338,7 +338,7 @@ type: adr
 id: 5
 title: "Long parameter list"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, function-design, api-design, maps]
 description: "Functions with many positional parameters bind arguments by position, not by name, so same-typed parameters transpose silently with no MatchError or compiler warning. Group related arguments into a map or struct so each value is named at the call site, and split unrelated arguments into separate functions."
 ---
@@ -437,7 +437,7 @@ type: adr
 id: 6
 title: "Namespace trespassing"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, modules, libraries, code-loading]
 description: "A library must define every module under a prefix derived from its own package name, because the BEAM loads exactly one module per fully qualified name per node, so two libraries defining the same name become mutually incompatible."
 ---
@@ -494,7 +494,7 @@ type: adr
 id: 7
 title: "Non-assertive map access"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, maps, access, assertiveness, structs]
 description: "Access required map keys with static `map.key`, which raises `KeyError` at the access site, and reserve dynamic `map[:key]` for optional keys. Dynamic access on a missing required key returns `nil` through the Access behaviour, deferring the crash far from its cause."
 ---
@@ -570,7 +570,7 @@ type: adr
 id: 8
 title: "Non-assertive pattern matching"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, pattern-matching, error-handling, assertive-code]
 description: "Defensive accessors like Enum.at/2 and catch-all `_` clauses return a plausible value for malformed or unexpected input instead of failing, so corruption escapes the process that produced it. Destructure with a match and enumerate the expected case clauses so a mismatch raises a localized MatchError or CaseClauseError the supervisor can act on."
 ---
@@ -657,7 +657,7 @@ type: adr
 id: 9
 title: "Non-assertive truthiness"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, truthiness, booleans, erlang-interop, assertive-code]
 description: "Elixir's `&&/2`, `||/2`, and `!/1` operate on truthiness and silently coerce any non-`nil`, non-`false` term as true. When operands are guaranteed booleans, use `and/2`, `or/2`, and `not/1`, which require a boolean operand and raise `BadBooleanError` otherwise, catching unexpected non-boolean values such as Erlang's `:undefined` at the boundary."
 ---
@@ -737,7 +737,7 @@ type: adr
 id: 10
 title: "Structs with 32 fields or more"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, structs, memory, performance, data-modeling]
 description: "A struct with 32 or more declared fields crosses the BEAM threshold from flat-map to hash-map representation, losing per-update key-tuple sharing and the compile-time key tuple shared across instances, which raises memory use. Keep declared fields under 32 by nesting optional or rarely-touched fields."
 ---

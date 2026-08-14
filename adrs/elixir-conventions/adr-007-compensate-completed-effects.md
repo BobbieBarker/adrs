@@ -3,8 +3,8 @@ type: adr
 id: 7
 title: Compensate Completed Effects in Fallible Chains
 status: accepted
-date: 2026-08-02
-updated: 2026-08-09
+date: '2026-08-02'
+updated: '2026-08-09'
 tags: [elixir, error-handling, with, side-effects, compensation, resource-lifetime, otp]
 description: "`with` propagates a returned failure and undoes nothing. Inline compensation handles returned failures while the coordinator remains alive; a live local owner may monitor a holder to reclaim process-scoped resources; external effects that must be repaired after coordinator or VM death need provider expiry or durable correlation state and reconciliation. Callers supply undos in reverse acquisition order, every supplied undo is attempted left-to-right, cleanup failures are appended to the original structured error, and idempotency replaces compensation only under durably owned retry-to-completion."
 ---

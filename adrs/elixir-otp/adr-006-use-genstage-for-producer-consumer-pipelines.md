@@ -3,8 +3,8 @@ type: adr
 id: 6
 title: Use GenStage for Producer-Consumer Pipelines
 status: accepted
-date: 2026-04-29
-updated: 2026-08-09
+date: '2026-04-29'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, backpressure, genstage, broadway, flow]
 description: When one process produces work faster than another consumes it, use GenStage, Flow, or Broadway. Do not build pipelines on naked cast.
 ---

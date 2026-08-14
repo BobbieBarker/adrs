@@ -3,7 +3,7 @@ type: adr
 id: 1
 title: "Comments overuse"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, comments, documentation, readability, naming]
 description: "Comments that restate self-explanatory code rot because the Elixir tokenizer discards them and nothing checks them against the code. Replace them with expressive names and module attributes, and move real contracts into `@doc`/`@moduledoc`, which compile into the BEAM Docs chunk and are testable as doctests."
 ---

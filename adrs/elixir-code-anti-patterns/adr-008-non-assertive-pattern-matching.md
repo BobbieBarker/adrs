@@ -3,7 +3,7 @@ type: adr
 id: 8
 title: "Non-assertive pattern matching"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, pattern-matching, error-handling, assertive-code]
 description: "Defensive accessors like Enum.at/2 and catch-all `_` clauses return a plausible value for malformed or unexpected input instead of failing, so corruption escapes the process that produced it. Destructure with a match and enumerate the expected case clauses so a mismatch raises a localized MatchError or CaseClauseError the supervisor can act on."
 ---

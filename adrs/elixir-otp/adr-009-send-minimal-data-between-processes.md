@@ -3,7 +3,7 @@ type: adr
 id: 9
 title: "Send Minimal Data Between Processes"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 updated: '2026-08-14'
 tags: [elixir, anti-pattern, processes, message-passing, performance, memory]
 description: "Same-node BEAM messages copy ordinary term structure into receiver-owned storage, although reference-counted binaries and literals are shared and queued data may remain off-heap. A closure carries the variables it captures, not only the field it later reads. Send only the fields a process needs, or let it fetch its own data."

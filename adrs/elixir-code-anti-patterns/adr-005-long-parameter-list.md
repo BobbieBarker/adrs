@@ -3,7 +3,7 @@ type: adr
 id: 5
 title: "Long parameter list"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, function-design, api-design, maps]
 description: "Functions with many positional parameters bind arguments by position, not by name, so same-typed parameters transpose silently with no MatchError or compiler warning. Group related arguments into a map or struct so each value is named at the call site, and split unrelated arguments into separate functions."
 ---

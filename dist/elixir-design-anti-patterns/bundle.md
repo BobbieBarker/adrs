@@ -9,7 +9,7 @@ type: adr
 id: 1
 title: "Alternative return types"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, api-design, return-types, typespecs]
 description: "A function whose options change its return type forces its spec into a union of every possible shape that no caller can narrow, because the option selecting the shape is a runtime value. Give each return shape its own named function so each has a single, statically knowable return type."
 ---
@@ -83,7 +83,7 @@ type: adr
 id: 2
 title: "Boolean obsession"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, data-modeling, atoms]
 description: "Multiple overlapping boolean options or struct fields encode one piece of state across 2^N representable combinations, most of which are invalid and must be resolved by hand-written priority logic. Replace them with a single atom field (or a composite type) whose values name only the valid states."
 ---
@@ -165,7 +165,7 @@ type: adr
 id: 3
 title: "Exceptions for control-flow"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, error-handling, control-flow, library-design]
 description: "Driving expected control flow through raise and try/rescue captures a stacktrace and unwinds the stack on the normal path, and a rescue clause cannot tell an anticipated error from an unrelated bug it silently absorbs. Match result tuples with case, and have library functions return {:ok, value} | {:error, reason} with a bang variant built on top."
 ---
@@ -275,7 +275,7 @@ type: adr
 id: 4
 title: "Primitive obsession"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, data-modeling, structs]
 description: "Carrying structured domain values (addresses, money) in bare strings or floats forces every consumer to re-parse and re-validate, because primitive guards like is_binary/1 match any value of the type. Parse once at the boundary into a struct, and model money as integer minor units or Decimal since IEEE 754 floats cannot represent decimal fractions exactly."
 ---
@@ -374,7 +374,7 @@ type: adr
 id: 5
 title: "Unrelated multi-clause function"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, multi-clause, pattern-matching]
 description: "A multi-clause function shares one name, one @spec, and one @doc across every clause. Grouping unrelated behavior under that single contract widens the spec into a union of disjoint types that constrains no caller and forces the documentation into per-argument conditionals; split unrelated clauses into separately named functions."
 ---
@@ -445,7 +445,7 @@ type: adr
 id: 6
 title: "Using application configuration for libraries"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, configuration, library-design, application-environment, supervision]
 description: "A library that reads its own configuration from the application environment exposes a single node-global value per key, so every consumer and every call site is locked into one behavior. Take configuration as function arguments, consumer-owned child specs, or required options on `use` instead."
 ---

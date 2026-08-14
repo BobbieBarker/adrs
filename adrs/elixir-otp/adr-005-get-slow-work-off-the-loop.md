@@ -3,8 +3,8 @@ type: adr
 id: 5
 title: Get Slow Work Off the Processing Loop
 status: accepted
-date: 2026-04-22
-updated: 2026-08-09
+date: '2026-04-22'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, handle-continue, task, async, state-ownership]
 description: "Slow I/O and unbounded computation belong in supervised concurrent work, not in a GenServer callback. handle_continue provides bounded post-init sequencing but still runs on the processing loop. For asynchronous calls, assign exactly one component to reply on every terminal path. Moving work off the loop does not move state ownership: the task computes and the owning process decides."
 ---

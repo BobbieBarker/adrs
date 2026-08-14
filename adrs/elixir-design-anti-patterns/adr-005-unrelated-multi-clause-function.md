@@ -3,7 +3,7 @@ type: adr
 id: 5
 title: "Unrelated multi-clause function"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, multi-clause, pattern-matching]
 description: "A multi-clause function shares one name, one @spec, and one @doc across every clause. Grouping unrelated behavior under that single contract widens the spec into a union of disjoint types that constrains no caller and forces the documentation into per-argument conditionals; split unrelated clauses into separately named functions."
 ---

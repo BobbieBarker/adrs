@@ -3,7 +3,7 @@ type: adr
 id: 3
 title: "Unnecessary macros"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, meta-programming, compile-time]
 description: "A macro receives unevaluated AST at compile time and expands inline at every call site, forcing callers to `require` it; a function receives values at runtime and is shared as one compiled body. Use `defmacro` only when the code must manipulate unevaluated code, otherwise a named function is simpler and carries no compile-time dependency."
 ---

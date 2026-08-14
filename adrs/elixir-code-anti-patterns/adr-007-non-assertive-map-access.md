@@ -3,7 +3,7 @@ type: adr
 id: 7
 title: "Non-assertive map access"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, maps, access, assertiveness, structs]
 description: "Access required map keys with static `map.key`, which raises `KeyError` at the access site, and reserve dynamic `map[:key]` for optional keys. Dynamic access on a missing required key returns `nil` through the Access behaviour, deferring the crash far from its cause."
 ---

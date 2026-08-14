@@ -3,7 +3,7 @@ type: adr
 id: 2
 title: "Complex `else` clauses in `with`"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, with, error-handling, control-flow, readability]
 description: "A `with` expression's single `else` block flattens the failures of every `<-` clause into one place, stripping the provenance of which clause failed and letting structurally similar errors collapse into the wrong catch-all. Normalize each step's return in a private function so `with` expresses only the success path."
 ---

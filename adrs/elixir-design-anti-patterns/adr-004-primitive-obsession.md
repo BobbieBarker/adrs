@@ -3,7 +3,7 @@ type: adr
 id: 4
 title: "Primitive obsession"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, data-modeling, structs]
 description: "Carrying structured domain values (addresses, money) in bare strings or floats forces every consumer to re-parse and re-validate, because primitive guards like is_binary/1 match any value of the type. Parse once at the boundary into a struct, and model money as integer minor units or Decimal since IEEE 754 floats cannot represent decimal fractions exactly."
 ---

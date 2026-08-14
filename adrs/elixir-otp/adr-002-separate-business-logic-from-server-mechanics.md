@@ -3,8 +3,8 @@ type: adr
 id: 2
 title: Own State in the Process; Separate Transitions From Server Mechanics
 status: accepted
-date: 2026-04-17
-updated: 2026-08-09
+date: '2026-04-17'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, architecture, state-ownership, testing]
 description: "The process owns its state and the non-interleaving application of transitions against it. A process API publishes transitions and queries, never `get_state`, `replace_state`, or `update_state`, which turn one process-owned transition into a caller-side read-modify-write. Every GenServer splits into three modules across three files (API, Server, Impl), where Impl holds the subsystem's state transitions and policy, vendor translation, persistence, and lifecycle-and-correlation live in named sibling modules that each take the slice of state they own."
 ---
