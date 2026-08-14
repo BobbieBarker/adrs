@@ -3,8 +3,8 @@ type: adr
 id: 12
 title: The Shape of GenServer State
 status: accepted
-date: 2026-08-02
-updated: 2026-08-09
+date: '2026-08-02'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, state, structs, types, composition]
 description: "A GenServer's state is a struct in its own module with a fully enumerated @type t, @enforce_keys, and one construction function, never a bare map and never a @typep map type. Configuration, injected collaborators, and changing concerns have distinct homes, and each concern's module owns its transitions. The state struct is an architectural boundary; no accessor exists so a caller or test can read live fields."
 ---

@@ -3,7 +3,7 @@ type: adr
 id: 1
 title: "Alternative return types"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, api-design, return-types, typespecs]
 description: "A function whose options change its return type forces its spec into a union of every possible shape that no caller can narrow, because the option selecting the shape is a runtime value. Give each return shape its own named function so each has a single, statically knowable return type."
 ---

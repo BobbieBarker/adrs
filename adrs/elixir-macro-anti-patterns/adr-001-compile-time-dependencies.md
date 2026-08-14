@@ -3,7 +3,7 @@ type: adr
 id: 1
 title: "Compile-time dependencies"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, compilation, dependencies, metaprogramming]
 description: "Passing a module reference to a macro that embeds it in the module body makes the referenced module a compile-time dependency, so editing it forces dependent modules to recompile. Expand the literal into its function context with Macro.expand_literals/2 to keep it a runtime dependency."
 ---

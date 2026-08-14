@@ -3,8 +3,8 @@ type: adr
 id: 1
 title: Reach for Simpler Primitives Before GenServer
 status: accepted
-date: 2026-04-17
-updated: 2026-08-09
+date: '2026-04-17'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, concurrency, architecture]
 description: A GenServer is a long-lived OTP process that serializes its own message handling. Use it when that serialization, exclusive ownership, or long-lived coordination is required; otherwise default to a plain module, Agent, Task, Registry, or ETS.
 ---

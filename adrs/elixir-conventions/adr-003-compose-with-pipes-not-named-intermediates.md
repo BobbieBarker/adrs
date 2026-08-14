@@ -3,8 +3,8 @@ type: adr
 id: 3
 title: Compose with Pipes, Not Named Intermediates
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, style, pipes, composition, captures]
 description: "Express sequential transformations through |> pipes, not chained rebindings of one name. Use & captures over anonymous wrappers. Use then/2 to adapt return shapes when the next call doesn't accept the threaded value first. Use tap/2 for in-chain side effects."
 ---

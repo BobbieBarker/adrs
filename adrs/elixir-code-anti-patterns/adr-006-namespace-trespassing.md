@@ -3,7 +3,7 @@ type: adr
 id: 6
 title: "Namespace trespassing"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, modules, libraries, code-loading]
 description: "A library must define every module under a prefix derived from its own package name, because the BEAM loads exactly one module per fully qualified name per node, so two libraries defining the same name become mutually incompatible."
 ---

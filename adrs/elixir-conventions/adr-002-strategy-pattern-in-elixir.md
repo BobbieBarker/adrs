@@ -3,8 +3,8 @@ type: adr
 id: 2
 title: The Strategy Pattern in Elixir
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, design-patterns, behaviours, protocols, polymorphism, dependency-injection]
 description: "Strategy is the decision to select an algorithm at runtime. Elixir expresses it four ways, and which one is correct depends on who owns selection: owned tagged shapes use function clauses, a first argument's datatype uses a protocol, a caller-selected local operation uses a function, and wiring injects a named behaviour implementation with per-instance state. Contracts expose failure shapes; names and documentation expose operational effects."
 ---

@@ -1,0 +1,110 @@
+{
+  "counts": {
+    "adrs": 44,
+    "examples": 226,
+    "records": 385,
+    "rules": 113,
+    "supporting": 2
+  },
+  "domains": [
+    {
+      "artifact": "elixir-code-anti-patterns/retrieval.jsonl",
+      "counts": {
+        "adrs": 10,
+        "examples": 32,
+        "records": 58,
+        "rules": 16,
+        "supporting": 0
+      },
+      "description": "ADRs codifying the official Elixir code-related anti-patterns: comment overuse, with/else complexity, in-clause extraction, dynamic atoms, parameter lists, namespace trespassing, assertive access, and struct size.",
+      "domain": "elixir-code-anti-patterns",
+      "sha256": "61e79a7beb5b337782a4ecbc340266cda5f579f8f037f1c0e801ac0b6b20211d",
+      "title": "Elixir Code Anti-Patterns"
+    },
+    {
+      "artifact": "elixir-conventions/retrieval.jsonl",
+      "counts": {
+        "adrs": 8,
+        "examples": 60,
+        "records": 98,
+        "rules": 30,
+        "supporting": 0
+      },
+      "description": "ADRs covering language-level decisions: structural dispatch, runtime algorithm selection, pipeline composition, struct-based domain entities, `with` chain discipline, streaming pass-through data, effect compensation, and structured error values.",
+      "domain": "elixir-conventions",
+      "sha256": "fd3bf99c8ab656fa293405d020f24ab184302658cc9a5a42ea5066d3eed13ed5",
+      "title": "Elixir Conventions"
+    },
+    {
+      "artifact": "elixir-design-anti-patterns/retrieval.jsonl",
+      "counts": {
+        "adrs": 6,
+        "examples": 22,
+        "records": 39,
+        "rules": 11,
+        "supporting": 0
+      },
+      "description": "ADRs codifying the official Elixir design-related anti-patterns: return-type consistency, boolean and primitive obsession, exceptions for control flow, unrelated multi-clause functions, and library configuration.",
+      "domain": "elixir-design-anti-patterns",
+      "sha256": "fdc9135d671b5be85fee314afe0d044930140076468889262b7be28edcb0dee7",
+      "title": "Elixir Design Anti-Patterns"
+    },
+    {
+      "artifact": "elixir-ecto/retrieval.jsonl",
+      "counts": {
+        "adrs": 1,
+        "examples": 2,
+        "records": 4,
+        "rules": 1,
+        "supporting": 0
+      },
+      "description": "ADRs covering database access decisions: transaction boundaries and the commit contract.",
+      "domain": "elixir-ecto",
+      "sha256": "70682db05b97016ff1236033d7d49262f0d9bb476c950a203a51a6230bba9d17",
+      "title": "Elixir Ecto"
+    },
+    {
+      "artifact": "elixir-macro-anti-patterns/retrieval.jsonl",
+      "counts": {
+        "adrs": 5,
+        "examples": 14,
+        "records": 26,
+        "rules": 7,
+        "supporting": 0
+      },
+      "description": "ADRs codifying the official Elixir meta-programming anti-patterns: compile-time dependencies (tracked and untracked), code-generation size, unnecessary macros, and use versus import.",
+      "domain": "elixir-macro-anti-patterns",
+      "sha256": "6c0c066b1bfd9c938767d1d682e98d2ec28f885ff1f1525bee7789b76bc37c8c",
+      "title": "Elixir Macro Anti-Patterns"
+    },
+    {
+      "artifact": "elixir-otp/retrieval.jsonl",
+      "counts": {
+        "adrs": 13,
+        "examples": 92,
+        "records": 153,
+        "rules": 46,
+        "supporting": 2
+      },
+      "description": "ADRs covering OTP, GenServer, supervision, BEAM scheduling, and stateful-process testing.",
+      "domain": "elixir-otp",
+      "sha256": "3caa643df4569feaa8b27cb6134e7afc8634473eefd42fcef4e36eb6e4b016ed",
+      "title": "Elixir OTP / GenServer"
+    },
+    {
+      "artifact": "elixir-resilience/retrieval.jsonl",
+      "counts": {
+        "adrs": 1,
+        "examples": 4,
+        "records": 7,
+        "rules": 2,
+        "supporting": 0
+      },
+      "description": "ADRs covering calls to external services under failure: upstream rate limits, shared backpressure, and coordinated recovery.",
+      "domain": "elixir-resilience",
+      "sha256": "20eb31c2d3e8912a05041805ffa18c486aeb71211bddcd68f787dbb369f391dc",
+      "title": "Elixir Resilience / External Services"
+    }
+  ],
+  "schema_version": "retrieval-v1"
+}

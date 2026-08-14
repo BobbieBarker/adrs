@@ -3,8 +3,8 @@ type: adr
 id: 8
 title: Represent Domain Errors as a Structured Value
 status: accepted
-date: 2026-08-05
-updated: 2026-08-09
+date: '2026-08-05'
+updated: '2026-08-09'
 tags: [elixir, errors, error-handling, result-tuples, contracts]
 description: "Every expected domain or application failure is returned as `{:error, %ErrorMessage{}}` beside the function's success value. The error carries a supported status-category `code`, a public-safe `message`, and optional bounded diagnostic `details`. Bare strings and bare atoms are not application error values."
 ---

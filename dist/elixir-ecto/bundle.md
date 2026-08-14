@@ -9,8 +9,8 @@ type: adr
 id: 1
 title: Use Repo.transact for Database Transactions
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, ecto, transactions, error-handling]
 description: "Wrap every database transaction in `Repo.transact/2`, whose callback commits on a final normal `{:ok, _}` and rolls back on a final normal `{:error, _}`. `Repo.transaction/2` treats a normally returned error tuple as successful callback completion, so earlier writes may commit unless the callback raises or explicitly calls `Repo.rollback/1`. Ecto soft-deprecated it in favour of `transact/2`."
 ---

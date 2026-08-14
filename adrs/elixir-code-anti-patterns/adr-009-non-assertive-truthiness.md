@@ -3,7 +3,7 @@ type: adr
 id: 9
 title: "Non-assertive truthiness"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, truthiness, booleans, erlang-interop, assertive-code]
 description: "Elixir's `&&/2`, `||/2`, and `!/1` operate on truthiness and silently coerce any non-`nil`, non-`false` term as true. When operands are guaranteed booleans, use `and/2`, `or/2`, and `not/1`, which require a boolean operand and raise `BadBooleanError` otherwise, catching unexpected non-boolean values such as Erlang's `:undefined` at the boundary."
 ---

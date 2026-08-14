@@ -3,8 +3,8 @@ type: adr
 id: 11
 title: Test OTP Code Through Real Processes
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, otp, testing, sys, sql-sandbox, callers]
 description: "Start every test-scoped fixture or service with start_supervised!/1. Test a state transition directly as a function; use a real supervised process when the behavior's meaning depends on ordering, serialized state transitions, timers, monitors, task correlation, registration, supervision, or shutdown, and never create an Impl module just to make a test process-free. :sys.replace_state/2 is prohibited on every process, including the ones your application owns, and :sys.get_state/2 is permitted only as a discarded-value mailbox barrier for prior messages the same test process sent to the same live PID. application.ex starts the same supervision tree in every environment. Reach a sandboxed data store from a spawned process through a $callers-propagating Task primitive, or grant a dedicated process access with Sandbox.allow/3."
 ---

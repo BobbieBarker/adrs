@@ -3,8 +3,8 @@ type: adr
 id: 4
 title: Never Block the GenServer Processing Loop
 status: accepted
-date: 2026-04-22
-updated: 2026-08-09
+date: '2026-04-22'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, performance, callbacks]
 description: GenServer callbacks handle one message at a time. Blocking I/O or unbounded computation in a callback stalls every other caller. Raising the call timeout papers over the problem instead of fixing it.
 ---

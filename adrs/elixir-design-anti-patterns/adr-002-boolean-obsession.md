@@ -3,7 +3,7 @@ type: adr
 id: 2
 title: "Boolean obsession"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, design, data-modeling, atoms]
 description: "Multiple overlapping boolean options or struct fields encode one piece of state across 2^N representable combinations, most of which are invalid and must be resolved by hand-written priority logic. Replace them with a single atom field (or a composite type) whose values name only the valid states."
 ---

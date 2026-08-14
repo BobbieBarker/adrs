@@ -3,7 +3,7 @@ type: adr
 id: 10
 title: "Structs with 32 fields or more"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, structs, memory, performance, data-modeling]
 description: "A struct with 32 or more declared fields crosses the BEAM threshold from flat-map to hash-map representation, losing per-update key-tuple sharing and the compile-time key tuple shared across instances, which raises memory use. Keep declared fields under 32 by nesting optional or rarely-touched fields."
 ---

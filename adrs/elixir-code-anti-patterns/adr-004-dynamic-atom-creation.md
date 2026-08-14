@@ -3,7 +3,7 @@ type: adr
 id: 4
 title: "Dynamic atom creation"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, atoms, memory, security, input-validation]
 description: "Converting uncontrolled external strings to atoms with String.to_atom/1 leaks atoms, which are never garbage collected and are capped at 1,048,576 per node. Map a fixed set with pattern matching, or guard open input with String.to_existing_atom/1."
 ---

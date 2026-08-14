@@ -9,7 +9,7 @@ type: adr
 id: 1
 title: "Compile-time dependencies"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, compilation, dependencies, metaprogramming]
 description: "Passing a module reference to a macro that embeds it in the module body makes the referenced module a compile-time dependency, so editing it forces dependent modules to recompile. Expand the literal into its function context with Macro.expand_literals/2 to keep it a runtime dependency."
 ---
@@ -101,7 +101,7 @@ type: adr
 id: 2
 title: "Large code generation"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, metaprogramming, compile-time, code-generation]
 description: "A macro injects its quoted body into the caller at every invocation, and the compiler compiles each copy, so a large quoted body multiplied across many call sites slows compilation and bloats the .beam file. Quote only a call to a regular function and put the bulk logic in that function."
 ---
@@ -185,7 +185,7 @@ type: adr
 id: 3
 title: "Unnecessary macros"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, meta-programming, compile-time]
 description: "A macro receives unevaluated AST at compile time and expands inline at every call site, forcing callers to `require` it; a function receives values at runtime and is shared as one compiled body. Use `defmacro` only when the code must manipulate unevaluated code, otherwise a named function is simpler and carries no compile-time dependency."
 ---
@@ -243,7 +243,7 @@ type: adr
 id: 4
 title: "`use` instead of `import`"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, use, code-generation, modularity]
 description: "`use M` expands at compile time to `M.__using__/1`, whose quoted body is injected verbatim into the caller, hiding propagated imports, behaviours, and definitions and creating compile-time dependencies. Prefer lexically scoped `import`/`alias` when no code injection is required."
 ---
@@ -371,7 +371,7 @@ type: adr
 id: 5
 title: "Untracked compile-time dependencies"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, compile-time-dependencies, metaprogramming, recompilation]
 description: "Building module names programmatically with Module.concat/2 or raw atoms hides the alias from the compiler's dependency tracker, so dependent files are not recompiled when the target module changes and the build silently goes stale. Write module names as literal aliases, or construct them inside a macro so the alias enters the AST at expansion time."
 ---

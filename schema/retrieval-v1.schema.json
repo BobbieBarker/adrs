@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BobbieBarker/adrs/blob/main/schema/retrieval-v1.schema.json",
+  "title": "ADR hierarchical retrieval record v1",
+  "description": "A model-neutral retrieval record generated from one public ADR collection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "record_kind",
+    "parent_id",
+    "hydrate_id",
+    "ordinal",
+    "domain",
+    "adr_id",
+    "rule_number",
+    "polarity",
+    "adr_title",
+    "routing_title",
+    "rule_title",
+    "heading_path",
+    "status",
+    "date",
+    "updated",
+    "tags",
+    "source_description",
+    "routing_description",
+    "applies_to",
+    "source_path",
+    "source_start_line",
+    "source_end_line",
+    "languages",
+    "source_sha256",
+    "retrieval_sha256",
+    "references",
+    "retrieval_text",
+    "display_text"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "retrieval-v1"
+    },
+    "record_id": {
+      "$ref": "#/$defs/recordId"
+    },
+    "record_kind": {
+      "enum": ["adr_summary", "rule", "example", "supporting"]
+    },
+    "parent_id": {
+      "oneOf": [
+        {"$ref": "#/$defs/recordId"},
+        {"type": "null"}
+      ]
+    },
+    "hydrate_id": {
+      "$ref": "#/$defs/hydrationId"
+    },
+    "ordinal": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "domain": {
+      "$ref": "#/$defs/domain"
+    },
+    "adr_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rule_number": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "polarity": {
+      "type": ["string", "null"],
+      "enum": ["positive", "negative", null]
+    },
+    "adr_title": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "routing_title": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "rule_title": {
+      "oneOf": [
+        {"$ref": "#/$defs/nonEmptyString"},
+        {"type": "null"}
+      ]
+    },
+    "heading_path": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "status": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "date": {
+      "$ref": "#/$defs/isoDate"
+    },
+    "updated": {
+      "oneOf": [
+        {"$ref": "#/$defs/isoDate"},
+        {"type": "null"}
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "source_description": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "routing_description": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "applies_to": {
+      "$ref": "#/$defs/appliesTo"
+    },
+    "source_path": {
+      "type": "string",
+      "pattern": "^adrs/[a-z][a-z0-9-]*/adr-[0-9]{3}-[^/]+\\.md$"
+    },
+    "source_start_line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_end_line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "languages": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "source_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "retrieval_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "references": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/reference"}
+    },
+    "retrieval_text": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "display_text": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "context": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string"
+    },
+    "consequences": {
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"record_kind": {"const": "adr_summary"}},
+        "required": ["record_kind"]
+      },
+      "then": {
+        "required": ["context", "decision", "consequences"],
+        "properties": {
+          "parent_id": {"type": "null"},
+          "rule_number": {"type": "null"},
+          "rule_title": {"type": "null"},
+          "polarity": {"type": "null"}
+        }
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {"required": ["context"]},
+            {"required": ["decision"]},
+            {"required": ["consequences"]}
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"record_kind": {"const": "rule"}},
+        "required": ["record_kind"]
+      },
+      "then": {
+        "properties": {
+          "parent_id": {"$ref": "#/$defs/adrId"},
+          "rule_number": {"type": "integer", "minimum": 1},
+          "rule_title": {"$ref": "#/$defs/nonEmptyString"},
+          "polarity": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"record_kind": {"const": "example"}},
+        "required": ["record_kind"]
+      },
+      "then": {
+        "properties": {
+          "parent_id": {"$ref": "#/$defs/ruleId"},
+          "hydrate_id": {"$ref": "#/$defs/ruleId"},
+          "rule_number": {"type": "integer", "minimum": 1},
+          "rule_title": {"$ref": "#/$defs/nonEmptyString"},
+          "polarity": {"enum": ["positive", "negative"]}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"record_kind": {"const": "supporting"}},
+        "required": ["record_kind"]
+      },
+      "then": {
+        "properties": {
+          "parent_id": {"$ref": "#/$defs/adrId"},
+          "rule_number": {"type": "null"},
+          "rule_title": {"type": "null"},
+          "polarity": {"type": "null"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "isoDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "adrId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*:adr-[0-9]{3}$"
+    },
+    "ruleId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*:adr-[0-9]{3}:rule-[0-9]{2}$"
+    },
+    "hydrationId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$"
+    },
+    "recordId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*:adr-[0-9]{3}(?::rule-[0-9]{2}(?::example:(?:correct|wrong):[0-9]{2})?|:supporting:[a-z0-9]+(?:-[a-z0-9]+)*)?$"
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_id", "raw_text", "source_line"],
+      "properties": {
+        "target_id": {
+          "oneOf": [
+            {"$ref": "#/$defs/adrId"},
+            {"$ref": "#/$defs/ruleId"}
+          ]
+        },
+        "raw_text": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "source_line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "appliesTo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        },
+        "content_match": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        }
+      }
+    }
+  }
+}

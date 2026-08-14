@@ -9,8 +9,8 @@ type: adr
 id: 1
 title: Structural Dispatch Over Imperative Branching
 status: accepted
-date: 2026-05-06
-updated: 2026-08-09
+date: '2026-05-06'
+updated: '2026-08-09'
 tags: [elixir, control-flow, pattern-matching, dispatch, idioms]
 description: "Every branching construct in Elixir fits one shape of discriminator: argument shape goes in the function head, guard-safe predicates go in guards, dependent fallible steps go in `with`, ordered non-guard-safe predicates go in `cond`, a value the function just computed goes in `case`, and `if` handles one two-way non-guard-safe predicate or inline value selection. Six rules name the discriminator each construct answers to."
 ---
@@ -283,8 +283,8 @@ type: adr
 id: 2
 title: The Strategy Pattern in Elixir
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, design-patterns, behaviours, protocols, polymorphism, dependency-injection]
 description: "Strategy is the decision to select an algorithm at runtime. Elixir expresses it four ways, and which one is correct depends on who owns selection: owned tagged shapes use function clauses, a first argument's datatype uses a protocol, a caller-selected local operation uses a function, and wiring injects a named behaviour implementation with per-instance state. Contracts expose failure shapes; names and documentation expose operational effects."
 ---
@@ -564,8 +564,8 @@ type: adr
 id: 3
 title: Compose with Pipes, Not Named Intermediates
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, style, pipes, composition, captures]
 description: "Express sequential transformations through |> pipes, not chained rebindings of one name. Use & captures over anonymous wrappers. Use then/2 to adapt return shapes when the next call doesn't accept the threaded value first. Use tap/2 for in-chain side effects."
 ---
@@ -746,8 +746,8 @@ type: adr
 id: 4
 title: Use Structs for Domain Entities
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, structs, types, dialyzer, jason, serialization]
 description: "Define every domain entity as a struct with a fully enumerated @type t and @enforce_keys for values callers must supply. When a struct intentionally has a direct JSON representation, gate that representation with @derive {Jason.Encoder, only: [...]}. Plain maps are reserved for genuinely ad-hoc data."
 ---
@@ -907,8 +907,8 @@ type: adr
 id: 5
 title: Keep `with` Chains Pure
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, control-flow, with, error-handling, fallible-chains]
 description: "Inside a `with` chain, every clause uses `<-` with a refutable success pattern. Plain `=` matches never participate in fall-through, and an irrefutable `value <- operation()` is the same smuggling in different syntax. Avoid `else`; normalize return shapes in called functions. Use `with` only when two or more fallible steps compose; return one unchanged result directly, use `case` to transform one result, and use pipelines for pure transformations."
 ---
@@ -1181,8 +1181,8 @@ type: adr
 id: 6
 title: Stream Pass-Through Data, Source to Sink
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, streaming, memory, performance, ecto, s3]
 description: "When data is passing through to a downstream sink (export, upload, relay), stream source → transform → sink with a bounded payload working set. Buffer only when the algorithm or required interface needs complete materialization or random access, and document the size limit. Prefer direct streaming; use a deliberately bounded spool only when source and sink lifetimes or interfaces require it."
 ---
@@ -1611,8 +1611,8 @@ type: adr
 id: 7
 title: Compensate Completed Effects in Fallible Chains
 status: accepted
-date: 2026-08-02
-updated: 2026-08-09
+date: '2026-08-02'
+updated: '2026-08-09'
 tags: [elixir, error-handling, with, side-effects, compensation, resource-lifetime, otp]
 description: "`with` propagates a returned failure and undoes nothing. Inline compensation handles returned failures while the coordinator remains alive; a live local owner may monitor a holder to reclaim process-scoped resources; external effects that must be repaired after coordinator or VM death need provider expiry or durable correlation state and reconciliation. Callers supply undos in reverse acquisition order, every supplied undo is attempted left-to-right, cleanup failures are appended to the original structured error, and idempotency replaces compensation only under durably owned retry-to-completion."
 ---
@@ -1963,8 +1963,8 @@ type: adr
 id: 8
 title: Represent Domain Errors as a Structured Value
 status: accepted
-date: 2026-08-05
-updated: 2026-08-09
+date: '2026-08-05'
+updated: '2026-08-09'
 tags: [elixir, errors, error-handling, result-tuples, contracts]
 description: "Every expected domain or application failure is returned as `{:error, %ErrorMessage{}}` beside the function's success value. The error carries a supported status-category `code`, a public-safe `message`, and optional bounded diagnostic `details`. Bare strings and bare atoms are not application error values."
 ---

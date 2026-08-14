@@ -3,7 +3,7 @@ type: adr
 id: 2
 title: "Large code generation"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, macros, metaprogramming, compile-time, code-generation]
 description: "A macro injects its quoted body into the caller at every invocation, and the compiler compiles each copy, so a large quoted body multiplied across many call sites slows compilation and bloats the .beam file. Quote only a call to a regular function and put the bulk logic in that function."
 ---

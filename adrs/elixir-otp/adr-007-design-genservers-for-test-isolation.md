@@ -3,8 +3,8 @@ type: adr
 id: 7
 title: Design GenServers for Test Isolation
 status: accepted
-date: 2026-04-29
-updated: 2026-08-09
+date: '2026-04-29'
+updated: '2026-08-09'
 tags: [elixir, otp, genserver, testing, dependency-injection]
 description: "Every GenServer accepts a configurable :name, validates its opts at start with NimbleOptions, and converts those opts into state exactly once through a State module constructor. When the server has substitutable collaborators, inject them via opts. When it owns storage whose contract is a cache, use a cache library with a sandbox adapter; inject other purpose-built stores through Deps. Mox is reserved for collaborators the test cannot start, such as HTTP APIs and third-party SDKs."
 ---

@@ -1,6 +1,6 @@
 # adrs
 
-Architecture Decision Records, packaged as agent context. Each ADR is a single rule with a Wrong example, a Correct example, and a Why paragraph that names the mechanism behind the difference. Written for engineers and shaped for LLMs to consume: the format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review code.
+Architecture Decision Records, packaged as agent context. Each ADR contains independently citable Rules with Wrong examples, Correct examples, and Why paragraphs that name the mechanism behind the difference. Written for engineers and shaped for LLMs to consume: the format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review code.
 
 The rules are grouped into domains. Each domain is a self-contained set with its own pre-rendered bundles under `dist/<domain>/`; adopt one or several.
 
@@ -158,9 +158,43 @@ References: <https://aider.chat/docs/usage/conventions.html>, <https://aider.cha
 
 ### Custom harness or your own retriever (RAG)
 
-`dist/<domain>/adrs.jsonl` is one ADR per row, with `id`, `domain`, `title`, `description`, `tags`, `applies_to`, and `body`. Embed the `body` field with the model of your choice; store the rest as metadata. The `applies_to` patterns are advisory; your retriever decides what to do with them.
+New retrievers should consume `dist/<domain>/retrieval.jsonl`. It is a model-neutral, versioned package of four record kinds:
 
-The `applies_to` shape (`paths` globs and `content_match` substrings) is the same data used to generate the harness-specific bundles, so a custom retriever can match those bundles' behavior by consuming this manifest directly.
+- `adr_summary` routes broad architectural questions and carries the ADR's Context, direct Decision prose, and Consequences.
+- `rule` is the minimum answer unit. Its `retrieval_text` contains the prescription and Why; its `display_text` preserves the complete Rule, including examples.
+- `example` makes Correct and Wrong code independently searchable while retaining explicit positive or negative polarity. Its `hydrate_id` points back to the complete Rule.
+- `supporting` preserves useful Decision subsections that are not numbered Rules.
+
+The v1 contract is published as `schema/retrieval-v1.schema.json`, and `dist/retrieval-catalog.json` inventories every domain artifact with counts and SHA-256 checksums. Stable semantic `record_id` values support deterministic lookup for explicit citations such as `elixir-otp` ADR-005 Rule 2; content hashes report change, but are never identifiers. Future incompatible retrieval changes require a new schema and artifact name or an explicit migration; they must not silently redefine `retrieval-v1` semantics.
+
+A recommended retrieval flow is:
+
+1. Resolve explicit ADR or Rule citations by `record_id` before similarity search.
+2. Embed `retrieval_text` for semantic search.
+3. Build a lexical/BM25 index over both `retrieval_text` and `display_text`, then fuse semantic and lexical rankings, preferably with reciprocal rank fusion (RRF).
+4. Filter or boost by accepted `status`, an explicitly requested `domain`, `tags`, and `applies_to`.
+5. Collapse matches by `hydrate_id` so several example hits do not crowd out other Rules.
+6. Return the complete Rule and load its ADR parent's Context.
+
+Never present a negative-polarity example as standalone guidance: hydrate it to its Rule so the prescription and Why travel with the anti-pattern. With only a few hundred records, exhaustive cosine or dot-product search is sufficient. Approximate-nearest-neighbor indexes, rerankers, embedding providers, and vector databases remain downstream choices.
+
+The evaluation judgments under `eval/` exercise terminology, paraphrases, code anti-patterns, hard negatives, cross-domain questions, citation routing, and abstention. `tools/score_retrieval.exs` scores a retriever's JSONL results without depending on any embedding vendor. Supply one result row per query, in this form:
+
+```json
+{"query_id":"q:elixir-otp:adr-005:rule-03:scenario","results":[{"record_id":"elixir-otp:adr-005:rule-03","score":0.9}],"abstained":false}
+```
+
+Then run:
+
+```sh
+elixir tools/score_retrieval.exs --queries eval --results results.jsonl --manifest dist --format json
+```
+
+#### Whole-ADR compatibility
+
+`dist/<domain>/adrs.jsonl` remains one ADR per row, with its existing `id`, `domain`, `title`, `description`, `tags`, `applies_to`, and `body` fields. Existing consumers may continue embedding `body`; no migration is required. New integrations should prefer `retrieval.jsonl` because its rule-level hierarchy, polarity, source locations, and hydration links provide more precise results.
+
+The `applies_to` shape (`paths` globs and `content_match` substrings) is the same routing data used to generate the harness-specific bundles, so a custom retriever can match those bundles' behavior by consuming it directly.
 
 ### Obsidian + qmd / ClawVault
 
@@ -173,17 +207,28 @@ adrs/<domain>/
 ├── adr-rules.yaml          # path/content patterns per ADR
 └── adr-NNN-*.md            # one ADR per file
 
-dist/<domain>/              # generated; do not edit by hand
-├── cursor/                 # Cursor .mdc rules
-├── claude-code/            # CLAUDE.md + .claude/rules/
-├── adrs.jsonl              # one ADR per row
-└── bundle.md               # concatenated
+dist/
+├── retrieval-catalog.json  # domain inventory, counts, and checksums
+└── <domain>/               # generated; do not edit by hand
+    ├── cursor/             # Cursor .mdc rules
+    ├── claude-code/        # CLAUDE.md + .claude/rules/
+    ├── retrieval.jsonl     # hierarchical retrieval-v1 records
+    ├── adrs.jsonl          # legacy one-ADR-per-row interface
+    └── bundle.md           # concatenated
+
+schema/
+└── retrieval-v1.schema.json
+
+eval/
+├── <domain>/queries.jsonl  # domain relevance judgments
+└── cross-domain/queries.jsonl
 
 tools/
-└── build_dist.exs          # regenerates dist/
+├── build_dist.exs          # regenerates and validates dist/
+└── score_retrieval.exs     # scores vendor-neutral result JSONL
 ```
 
-Run `elixir tools/build_dist.exs` after editing the source ADRs or manifests. Requires Elixir 1.12 or later (uses `Mix.install`). CI blocks PRs when `dist/` is out of sync with `adrs/`.
+Run `elixir tools/build_dist.exs` after editing the source ADRs or manifests. Requires Elixir 1.17 or later (uses `Mix.install`). The build parses and validates the complete corpus before replacing `dist/`, resolves ADR references across domains, validates generated retrieval rows, and emits deterministic artifacts. CI runs the tooling tests and blocks PRs when `dist/` is out of sync with `adrs/`.
 
 ## License
 

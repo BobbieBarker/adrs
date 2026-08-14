@@ -3,7 +3,7 @@ type: adr
 id: 13
 title: "Scope PubSub Topics to the Entity, Not the Event Type"
 status: accepted
-date: 2026-08-13
+date: '2026-08-13'
 tags: [elixir, otp, pubsub, message-passing, performance, scheduling]
 description: "Phoenix.PubSub sends once for each local subscription entry on a topic. When every entity both publishes to and subscribes to one event-type topic, delivery volume grows as N² even though each receiver discards the messages for other entities. Put the entity identifier in the topic so Registry lookup selects the interested subscribers before local delivery, and publish on state change rather than on a timer so the broadcast rate carries information."
 ---

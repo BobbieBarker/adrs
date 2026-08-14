@@ -3,7 +3,7 @@ type: adr
 id: 10
 title: "Supervise Every Long-Lived Process"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 updated: '2026-08-12'
 tags: [elixir, anti-pattern, otp, supervision, processes, fault-tolerance]
 description: "A process started outside a supervision tree has no restart strategy, no deterministic start or shutdown ordering, and is invisible to observer-based introspection because supervisors are the BEAM's lifecycle owners. Start every long-lived process as a static supervisor child, and every runtime-created one under a DynamicSupervisor."

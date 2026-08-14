@@ -3,8 +3,8 @@ type: adr
 id: 4
 title: Use Structs for Domain Entities
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, structs, types, dialyzer, jason, serialization]
 description: "Define every domain entity as a struct with a fully enumerated @type t and @enforce_keys for values callers must supply. When a struct intentionally has a direct JSON representation, gate that representation with @derive {Jason.Encoder, only: [...]}. Plain maps are reserved for genuinely ad-hoc data."
 ---

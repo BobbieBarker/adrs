@@ -3,7 +3,7 @@ type: adr
 id: 3
 title: "Complex extractions in clauses"
 status: accepted
-date: 2026-06-28
+date: '2026-06-28'
 tags: [elixir, anti-pattern, pattern-matching, multi-clause, readability, functions]
 description: "A multi-clause function head should bind only the variables its patterns and guards use to select a clause. Extracting body-only struct or map fields in the head hides which bindings actually drive dispatch, because nothing distinguishes a selection variable from local plumbing in the signature."
 ---

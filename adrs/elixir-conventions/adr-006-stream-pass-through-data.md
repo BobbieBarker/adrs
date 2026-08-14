@@ -3,8 +3,8 @@ type: adr
 id: 6
 title: Stream Pass-Through Data, Source to Sink
 status: accepted
-date: 2026-05-08
-updated: 2026-08-09
+date: '2026-05-08'
+updated: '2026-08-09'
 tags: [elixir, streaming, memory, performance, ecto, s3]
 description: "When data is passing through to a downstream sink (export, upload, relay), stream source → transform → sink with a bounded payload working set. Buffer only when the algorithm or required interface needs complete materialization or random access, and document the size limit. Prefer direct streaming; use a deliberately bounded spool only when source and sink lifetimes or interfaces require it."
 ---
