@@ -1,9 +1,9 @@
 {
   "counts": {
-    "adrs": 44,
-    "examples": 226,
-    "records": 385,
-    "rules": 113,
+    "adrs": 45,
+    "examples": 236,
+    "records": 401,
+    "rules": 118,
     "supporting": 2
   },
   "domains": [
@@ -24,15 +24,15 @@
     {
       "artifact": "elixir-conventions/retrieval.jsonl",
       "counts": {
-        "adrs": 8,
-        "examples": 60,
-        "records": 98,
-        "rules": 30,
+        "adrs": 9,
+        "examples": 70,
+        "records": 114,
+        "rules": 35,
         "supporting": 0
       },
       "description": "ADRs covering language-level decisions: structural dispatch, runtime algorithm selection, pipeline composition, struct-based domain entities, `with` chain discipline, streaming pass-through data, effect compensation, and structured error values.",
       "domain": "elixir-conventions",
-      "sha256": "db1443cb7e225c9e4538e9889bffa90a873847a66cc856c1b556c2ad72621977",
+      "sha256": "aa0d0e27ae363624ec40923604ce8f17a9f30abff8341d60015892b62fb0dd81",
       "title": "Elixir Conventions"
     },
     {

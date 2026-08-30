@@ -9,7 +9,7 @@ The rules are grouped into domains. Each domain is a self-contained set with its
 | Domain | Covers | ADRs |
 |---|---|---|
 | [`elixir-otp`](adrs/elixir-otp) | OTP, GenServer, supervision, BEAM scheduling, interprocess data, message routing, stateful-process testing | 13 |
-| [`elixir-conventions`](adrs/elixir-conventions) | Structural dispatch, runtime algorithm selection, pipeline composition, structs, `with` chains, streaming, effect compensation, structured errors | 8 |
+| [`elixir-conventions`](adrs/elixir-conventions) | Structural dispatch, runtime algorithm selection, pipeline composition, structs, validation-primitive selection, `with` chains, streaming, effect compensation, structured errors | 9 |
 | [`elixir-ecto`](adrs/elixir-ecto) | Transaction boundaries and the commit contract | 1 |
 | [`elixir-resilience`](adrs/elixir-resilience) | Calls to external services under failure: upstream rate limits, shared backpressure, coordinated recovery | 1 |
 | [`elixir-code-anti-patterns`](adrs/elixir-code-anti-patterns) | The official Elixir code anti-patterns | 10 |
@@ -38,9 +38,10 @@ Working with GenServer and the BEAM rewards a precise mental model of how they a
 
 These are the decisions a reader makes constantly and rarely writes down: which construct expresses
 a branch, whether an algorithm is chosen by the value or by the wiring, when a pipeline beats a
-rebinding, what a domain entity is made of, what may appear inside a `with`, and what a failure
-looks like once it leaves the function that produced it. Each rule names the compiler or runtime
-mechanism that separates the correct form from the plausible one.
+rebinding, what a domain entity is made of, which primitive validates a value on the way in, what
+may appear inside a `with`, and what a failure looks like once it leaves the function that produced
+it. Each rule names the compiler or runtime mechanism that separates the correct form from the
+plausible one.
 
 - [ADR-001: Structural Dispatch Over Imperative Branching](adrs/elixir-conventions/adr-001-structural-dispatch-over-imperative-branching.md)
 - [ADR-002: The Strategy Pattern in Elixir](adrs/elixir-conventions/adr-002-strategy-pattern-in-elixir.md)
@@ -50,6 +51,7 @@ mechanism that separates the correct form from the plausible one.
 - [ADR-006: Stream Pass-Through Data, Source to Sink](adrs/elixir-conventions/adr-006-stream-pass-through-data.md)
 - [ADR-007: Compensate Completed Effects in Fallible Chains](adrs/elixir-conventions/adr-007-compensate-completed-effects.md)
 - [ADR-008: Represent Domain Errors as a Structured Value](adrs/elixir-conventions/adr-008-represent-domain-errors-as-a-structured-value.md)
+- [ADR-009: Choose the Validation Primitive by the Value's Origin](adrs/elixir-conventions/adr-009-choose-the-validation-primitive-by-the-values-origin.md)
 
 ### elixir-ecto
 

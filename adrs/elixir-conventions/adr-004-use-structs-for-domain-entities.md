@@ -4,9 +4,9 @@ id: 4
 title: Use Structs for Domain Entities
 status: accepted
 date: '2026-05-08'
-updated: '2026-08-09'
+updated: '2026-08-30'
 tags: [elixir, structs, types, dialyzer, jason, serialization]
-description: "Define every domain entity as a struct with a fully enumerated @type t and @enforce_keys for values callers must supply. When a struct intentionally has a direct JSON representation, gate that representation with @derive {Jason.Encoder, only: [...]}. Plain maps are reserved for genuinely ad-hoc data."
+description: "Define every domain entity as a struct with a fully enumerated @type t, and declare @enforce_keys on a struct you write with defstruct for the values callers must supply. When a struct intentionally has a direct JSON representation, gate that representation with @derive {Jason.Encoder, only: [...]}. Plain maps are reserved for genuinely ad-hoc data, and which primitive produces the value at all is decided before these rules apply."
 ---
 
 # ADR-004: Use Structs for Domain Entities
@@ -19,7 +19,7 @@ Three discipline points around structs are easy to forget and produce real bugs 
 
 ## Decision
 
-Domain entities (records, value objects, configurations, anything with an enduring shape) are structs with a fully enumerated `@type t` and `@enforce_keys` for values callers must explicitly supply. A domain struct is not JSON-encodable by default. When it intentionally has a direct JSON representation, that representation is gated by `@derive {Jason.Encoder, only: [...]}` with an explicit allowlist. Plain maps are reserved for genuinely ad-hoc data.
+Domain entities (records, value objects, configurations, anything with an enduring shape) are structs with a fully enumerated `@type t`. A struct you write with `defstruct` declares `@enforce_keys` for the values callers must explicitly supply; a struct that an `Ecto.Schema` embedded schema declares does not, and ADR-009 Rule 4 governs that case. A domain struct is not JSON-encodable by default. When it intentionally has a direct JSON representation, that representation is gated by `@derive {Jason.Encoder, only: [...]}` with an explicit allowlist. Plain maps are reserved for genuinely ad-hoc data.
 
 The examples under each Rule are deliberately partial: each isolates the rule being discussed. A complete domain struct combines every applicable rule.
 
@@ -57,7 +57,7 @@ end
 
 ### Rule 2: Use `@enforce_keys` for fields that must be present at construction
 
-Every domain struct declares `@enforce_keys` for values the caller must explicitly supply. A field may have a valid default and stay out of the list even when its declared type is non-nullable, so the list is not a mechanical copy of every `@type t` field that omits `nil`.
+Every domain struct you write with `defstruct` declares `@enforce_keys` for values the caller must explicitly supply. A field may have a valid default and stay out of the list even when its declared type is non-nullable, so the list is not a mechanical copy of every `@type t` field that omits `nil`. A struct that an `Ecto.Schema` embedded schema declares takes ADR-009 Rule 4 instead, because `@enforce_keys` survives there but breaks the `cast/4` entry point.
 
 **Correct (`@enforce_keys` rule excerpt):**
 
@@ -91,7 +91,7 @@ end
 %MyApp.Geo.Location{region: "CA"}
 ```
 
-**Why:** `@enforce_keys` checks key presence when code builds a struct with a literal or `struct!/2`. It rejects an omitted key at that construction site, but it accepts an explicitly supplied `nil` or a value of the wrong type, validates no domain invariant, and does not govern struct updates. `struct/2` also bypasses the check. Typespecs and `@enforce_keys` therefore do different jobs, and neither replaces value validation. Normalize and validate external maps through a domain constructor or changeset before constructing the struct, then use `%Struct{}`, `%{struct | field: value}`, or `struct!/2` for domain construction and updates rather than generic map reshaping.
+**Why:** `@enforce_keys` checks key presence when code builds a struct with a literal or `struct!/2`. It rejects an omitted key at that construction site, but it accepts an explicitly supplied `nil` or a value of the wrong type, validates no domain invariant, and does not govern struct updates. `struct/2` also bypasses the check. Typespecs and `@enforce_keys` therefore do different jobs, and neither replaces value validation. A plain struct is the primitive for data your own code already holds in typed form, so the value reaches it already validated; ADR-009 Rule 1 routes external input to an embedded schema and a changeset instead. Build and update the struct with `%Struct{}`, `%{struct | field: value}`, or `struct!/2` rather than generic map reshaping.
 
 ### Rule 3: `@derive {Jason.Encoder, only: [...]}` with an explicit field list
 
@@ -150,8 +150,9 @@ end
 ## Consequences
 
 - Domain entities have a documented, fully declared shape that Dialyzer can analyze for provable inconsistencies.
-- Struct literals and `struct!/2` fail at construction when an enforced key is omitted; value validation remains the constructor or changeset's job.
-- Domain construction and updates use struct syntax or `struct!/2`, preserving the declared known-field boundary instead of generically reshaping maps.
+- A plain struct's literals and `struct!/2` calls fail at construction when an enforced key is omitted, and nothing else about the value is checked there. Value validation belongs to the primitive ADR-009 selects.
+- A plain struct's construction and updates use struct syntax or `struct!/2`, preserving the declared known-field boundary instead of generically reshaping maps. An embedded schema's values are built by `cast/4` and returned by `apply_action/2` (ADR-009 Rule 5).
 - Direct JSON encoding is opt-in. A new field does not enter an allowlisted Jason representation until its `only:` list is deliberately changed.
 - Plain maps are reserved for genuinely ad-hoc data (unstructured input, dynamic config, intermediate computation that has no enduring shape).
+- Which primitive produces the value is settled before these rules apply. ADR-009 selects it from the value's origin, and these rules govern the plain-struct outcome and the shape every struct declares.
 - Function heads that dispatch on struct type pattern-match the struct, not on individual map keys: `def format(%MyApp.Geo.Location{country_code: code})` (per ADR-001 Rule 1), not `def format(loc) when is_map(loc)`.

@@ -29,7 +29,7 @@ defmodule AdrDist.PackageValidator do
 
   @expected_counts %{
     "elixir-code-anti-patterns" => %{adrs: 10, rules: 16, examples: 32, supporting: 0},
-    "elixir-conventions" => %{adrs: 8, rules: 30, examples: 60, supporting: 0},
+    "elixir-conventions" => %{adrs: 9, rules: 35, examples: 70, supporting: 0},
     "elixir-design-anti-patterns" => %{adrs: 6, rules: 11, examples: 22, supporting: 0},
     "elixir-ecto" => %{adrs: 1, rules: 1, examples: 2, supporting: 0},
     "elixir-macro-anti-patterns" => %{adrs: 5, rules: 7, examples: 14, supporting: 0},
@@ -213,13 +213,13 @@ defmodule AdrDist.PackageValidator do
 
     (per_domain_errors ++
        [])
-    |> total_count_error("all domains", "adr_summary", totals, 44)
-    |> total_count_error("all domains", "rule", totals, 113)
-    |> total_count_error("all domains", "example", totals, 226)
+    |> total_count_error("all domains", "adr_summary", totals, 45)
+    |> total_count_error("all domains", "rule", totals, 118)
+    |> total_count_error("all domains", "example", totals, 236)
     |> total_count_error("all domains", "supporting", totals, 2)
     |> add_if(
-      length(records) != 385,
-      "dist/: expected 385 retrieval rows, found #{length(records)}"
+      length(records) != 401,
+      "dist/: expected 401 retrieval rows, found #{length(records)}"
     )
   end
 
@@ -611,12 +611,12 @@ defmodule AdrDist.PackageValidator do
     (duplicate_errors(query_ids, "evaluation query_id") ++
        [])
     |> add_if(
-      length(clean_rows) != 403,
-      "eval/: expected 403 queries, found #{length(clean_rows)}"
+      length(clean_rows) != 418,
+      "eval/: expected 418 queries, found #{length(clean_rows)}"
     )
-    |> evaluation_class_count_error(class_counts, "exact", 113)
-    |> evaluation_class_count_error(class_counts, "scenario", 113)
-    |> evaluation_class_count_error(class_counts, "code", 113)
+    |> evaluation_class_count_error(class_counts, "exact", 118)
+    |> evaluation_class_count_error(class_counts, "scenario", 118)
+    |> evaluation_class_count_error(class_counts, "code", 118)
     |> evaluation_class_count_error(class_counts, "hard_negative", 24)
     |> evaluation_class_count_error(class_counts, "multi_rule", 15)
     |> evaluation_class_count_error(class_counts, "no_answer", 15)
