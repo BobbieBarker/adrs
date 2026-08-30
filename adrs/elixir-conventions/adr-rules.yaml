@@ -105,3 +105,20 @@ adrs:
         - "Logger.error"
         - "Logger.warning"
 
+
+  - id: 9
+    file: adr-009-choose-the-validation-primitive-by-the-values-origin.md
+    title: "Choose the Validation Primitive by the Value's Origin"
+    description: "Deciding between an Ecto embedded schema, a NimbleOptions schema, and a plain struct when loose or externally sourced input becomes a named value: hand-written validate/1 ladders over decoded JSON or parsed config, embedded_schema without a database, embeds_one and cast_embed for nested input, @primary_key false on a value that is never persisted, removing defstruct and @enforce_keys when embedded_schema owns the struct, apply_action/2 versus apply_changes/1 as the constructor's result, cast/4 silently dropping unpermitted and unknown keys, and NimbleOptions rejecting an unknown or misspelled option key."
+    applies_to:
+      content_match:
+        - "embedded_schema"
+        - "embeds_one"
+        - "embeds_many"
+        - "cast_embed"
+        - "Ecto.Changeset"
+        - "apply_action"
+        - "apply_changes"
+        - "NimbleOptions"
+        - "validate_required"
+        - "@primary_key"

@@ -6,7 +6,7 @@ defmodule AdrDist.CorpusTest do
 
   @expected %{
     "elixir-code-anti-patterns" => %{adrs: 10, rules: 16, examples: 32, supporting: 0},
-    "elixir-conventions" => %{adrs: 8, rules: 30, examples: 60, supporting: 0},
+    "elixir-conventions" => %{adrs: 9, rules: 35, examples: 70, supporting: 0},
     "elixir-design-anti-patterns" => %{adrs: 6, rules: 11, examples: 22, supporting: 0},
     "elixir-ecto" => %{adrs: 1, rules: 1, examples: 2, supporting: 0},
     "elixir-macro-anti-patterns" => %{adrs: 5, rules: 7, examples: 14, supporting: 0},
@@ -62,10 +62,10 @@ defmodule AdrDist.CorpusTest do
     end)
 
     records = records_by_domain |> Map.values() |> List.flatten()
-    assert length(records) == 385
-    assert count_kind(records, "adr_summary") == 44
-    assert count_kind(records, "rule") == 113
-    assert count_kind(records, "example") == 226
+    assert length(records) == 401
+    assert count_kind(records, "adr_summary") == 45
+    assert count_kind(records, "rule") == 118
+    assert count_kind(records, "example") == 236
     assert count_kind(records, "supporting") == 2
 
     summaries = Enum.filter(records, &(&1["record_kind"] == "adr_summary"))
@@ -121,8 +121,8 @@ defmodule AdrDist.CorpusTest do
     end)
 
     examples = Enum.filter(records, &(&1["record_kind"] == "example"))
-    assert count_polarity(examples, "positive") == 113
-    assert count_polarity(examples, "negative") == 113
+    assert count_polarity(examples, "positive") == 118
+    assert count_polarity(examples, "negative") == 118
 
     Enum.each(examples, fn example ->
       assert example["parent_id"] == example["hydrate_id"]
