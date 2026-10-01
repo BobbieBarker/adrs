@@ -102,6 +102,10 @@ defmodule AdrDist.Markdown do
   @moduledoc """
   Parses the constrained ADR Markdown format without treating headings or labels
   inside fenced code blocks as document structure.
+
+  Numbered rules are required by default. Explicit narrative mode retains the
+  complete Decision region, including intervening review criteria, as one
+  supporting section instead of inventing rules or example polarity.
   """
 
   alias AdrDist.Markdown.{Document, Example, Rule, Section}
@@ -109,8 +113,11 @@ defmodule AdrDist.Markdown do
   @rule_heading ~r/^Rule\s+(\d+):\s+(.+)$/u
   @example_label ~r/^(\*\*(Correct|Wrong)(?:\s+\(.+\))?:\*\*)(.*)$/u
   @why_label ~r/^\*\*Why:\*\*(.*)$/u
+  @narrative_rule_heading ~r/^(?:Rules?(?:\b|\d)|Universal rules$|Situational rules$)/iu
+  @narrative_rule_label ~r/^\s*\*\*(?:Correct|Wrong|Why)\b/iu
 
   @type parse_error :: {:invalid_markdown, pos_integer(), String.t()}
+  @type structure :: :rules | :narrative
 
   @spec parse(String.t()) :: {:ok, Document.t()} | {:error, parse_error()}
   def parse(body) when is_binary(body) do
@@ -120,10 +127,23 @@ defmodule AdrDist.Markdown do
   @spec parse(String.t(), non_neg_integer()) :: {:ok, Document.t()} | {:error, parse_error()}
   def parse(body, line_offset)
       when is_binary(body) and is_integer(line_offset) and line_offset >= 0 do
-    case sections(body, line_offset) do
-      {:ok, parsed_sections} -> build_document(parsed_sections)
-      {:error, _reason} = error -> error
+    parse(body, line_offset, :rules)
+  end
+
+  @spec parse(String.t(), non_neg_integer(), structure()) ::
+          {:ok, Document.t()} | {:error, parse_error()}
+  def parse(body, line_offset, structure)
+      when is_binary(body) and is_integer(line_offset) and line_offset >= 0 and
+             structure in [:rules, :narrative] do
+    with {:ok, parsed_sections} <- sections(body, line_offset, structure),
+         {:ok, document} <- build_document(parsed_sections, structure) do
+      finish_document(document, body, line_offset, structure)
     end
+  end
+
+  def parse(body, line_offset, _structure)
+      when is_binary(body) and is_integer(line_offset) and line_offset >= 0 do
+    {:error, {:invalid_markdown, line_offset + 1, "structure must be :rules or :narrative"}}
   end
 
   @spec section_content(Section.t()) :: String.t()
@@ -148,14 +168,65 @@ defmodule AdrDist.Markdown do
     example.display_text
   end
 
-  defp sections(body, line_offset) do
+  defp finish_document(document, _body, _line_offset, :rules), do: {:ok, document}
+
+  defp finish_document(document, body, line_offset, :narrative) do
+    lines = String.split(body, "\n", trim: false)
+
+    decision =
+      complete_section(
+        document.decision,
+        lines,
+        line_offset,
+        document.consequences.start_line - 1
+      )
+
+    if String.trim(decision.body) == "" do
+      {:error, {:invalid_markdown, decision.start_line, "narrative Decision must not be empty"}}
+    else
+      {:ok,
+       %{
+         document
+         | supporting: [decision],
+           context:
+             complete_section(
+               document.context,
+               lines,
+               line_offset,
+               document.decision.start_line - 1
+             ),
+           consequences:
+             complete_section(
+               document.consequences,
+               lines,
+               line_offset,
+               length(lines) + line_offset
+             )
+       }}
+    end
+  end
+
+  defp complete_section(section, lines, line_offset, end_line) do
+    region =
+      Enum.slice(lines, section.start_line - line_offset - 1, end_line - section.start_line + 1)
+
+    %{
+      section
+      | body: region |> Enum.drop(1) |> Enum.join("\n"),
+        display_text: region |> Enum.join("\n") |> String.trim(),
+        end_line: end_line
+    }
+  end
+
+  defp sections(body, line_offset, structure) do
     lines = String.split(body, "\n", trim: false)
 
     initial = %{
       current: nil,
       fence: nil,
       sections: [],
-      stack: []
+      stack: [],
+      structure: structure
     }
 
     lines
@@ -180,23 +251,40 @@ defmodule AdrDist.Markdown do
         {:cont, {:ok, append_line(state, line)}}
 
       :outside ->
-        case heading(line) do
-          {:ok, level, title} ->
-            cond do
-              invalid_rule_heading_level?(level, title) ->
-                {:halt,
-                 {:error, {:invalid_markdown, line_number, "Rule headings must use H3 or H4"}}}
-
-              nested_rule_heading?(state.current, level) ->
-                {:cont, {:ok, append_line(state, line)}}
-
-              true ->
-                {:cont, {:ok, open_section(state, level, title, line, line_number)}}
-            end
-
-          :no_heading ->
-            {:cont, {:ok, append_line(state, line)}}
+        if state.structure == :narrative and narrative_rule_marker?(line) do
+          {:halt,
+           {:error,
+            {:invalid_markdown, line_number,
+             "narrative structure cannot contain Rule headings or Correct, Wrong, and Why labels"}}}
+        else
+          scan_heading(line, line_number, state)
         end
+    end
+  end
+
+  defp narrative_rule_marker?(line) do
+    case heading(line) do
+      {:ok, _level, title} -> Regex.match?(@narrative_rule_heading, title)
+      :no_heading -> Regex.match?(@narrative_rule_label, line)
+    end
+  end
+
+  defp scan_heading(line, line_number, state) do
+    case heading(line) do
+      {:ok, level, title} ->
+        cond do
+          invalid_rule_heading_level?(level, title) ->
+            {:halt, {:error, {:invalid_markdown, line_number, "Rule headings must use H3 or H4"}}}
+
+          nested_rule_heading?(state.current, level) ->
+            {:cont, {:ok, append_line(state, line)}}
+
+          true ->
+            {:cont, {:ok, open_section(state, level, title, line, line_number)}}
+        end
+
+      :no_heading ->
+        {:cont, {:ok, append_line(state, line)}}
     end
   end
 
@@ -290,7 +378,7 @@ defmodule AdrDist.Markdown do
     %{state | current: nil, sections: [section | state.sections]}
   end
 
-  defp build_document(sections) do
+  defp build_document(sections, structure) do
     titles = Enum.filter(sections, &(&1.level == 1))
     contexts = Enum.filter(sections, &(&1.level == 2 and &1.title == "Context"))
     decisions = Enum.filter(sections, &(&1.level == 2 and &1.title == "Decision"))
@@ -302,7 +390,7 @@ defmodule AdrDist.Markdown do
       {[title], [context], [decision], [consequences]} ->
         if title.start_line < context.start_line and context.start_line < decision.start_line and
              decision.start_line < consequences.start_line do
-          build_document_sections(title, context, decision, consequences, sections)
+          build_document_sections(title, context, decision, consequences, sections, structure)
         else
           {:error,
            {:invalid_markdown, out_of_order_line(title, context, decision, consequences),
@@ -316,12 +404,12 @@ defmodule AdrDist.Markdown do
     end
   end
 
-  defp build_document_sections(title, context, decision, consequences, sections) do
+  defp build_document_sections(title, context, decision, consequences, sections, structure) do
     rule_sections = Enum.filter(sections, &Regex.match?(@rule_heading, &1.title))
 
     case validate_rule_placement(rule_sections, decision, consequences) do
       :ok ->
-        case parse_rules(rule_sections, decision.start_line) do
+        case parse_rules(rule_sections, decision.start_line, structure) do
           {:ok, rules} ->
             supporting = supporting_sections(sections, decision, consequences)
 
@@ -388,7 +476,9 @@ defmodule AdrDist.Markdown do
 
   defp valid_rule_parent?(_section, _decision), do: false
 
-  defp parse_rules(rule_sections, fallback_line) do
+  defp parse_rules(_rule_sections, _fallback_line, :narrative), do: {:ok, []}
+
+  defp parse_rules(rule_sections, fallback_line, :rules) do
     rule_sections
     |> Enum.reduce_while({:ok, []}, fn section, {:ok, rules} ->
       case parse_rule(section) do

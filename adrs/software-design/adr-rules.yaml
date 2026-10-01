@@ -1,0 +1,11 @@
+domain: software-design
+title: Software Design
+description: "Language-agnostic decisions about module responsibilities, information hiding, cohesion, coupling, and interface costs."
+
+adrs:
+  - id: 1
+    file: adr-001-design-modules-for-information-hiding-high-cohesion-and-low-coupling.md
+    title: "Design Modules for Information Hiding, High Cohesion, and Low Coupling"
+    description: "When adding responsibilities or reviewing module, class, or package boundaries, identify leaked implementation knowledge, shared invariants, and coordination costs. Decide what to separate or keep together without treating file length, operation count, or shared domain values as sufficient reasons to split. Preserve lifecycle ownership when extracting policy or storage."
+    structure: narrative
+    applies_to: {}
