@@ -183,7 +183,12 @@ defmodule AdrDist.Source do
           do: [],
           else: ["ADR #{inspect(id)} applies_to is invalid"]
 
-      invalid_file ++ invalid_routing ++ invalid_applies_to
+      invalid_structure =
+        if Map.get(entry, "structure", "rules") in ["rules", "narrative"],
+          do: [],
+          else: ["ADR #{inspect(id)} structure must be rules or narrative"]
+
+      invalid_file ++ invalid_routing ++ invalid_applies_to ++ invalid_structure
     end)
   end
 
@@ -244,7 +249,9 @@ defmodule AdrDist.Source do
   end
 
   defp parse_adr_body(path, domain, entry, raw, frontmatter, body, line_offset) do
-    case Markdown.parse(body, line_offset) do
+    structure = if entry["structure"] == "narrative", do: :narrative, else: :rules
+
+    case Markdown.parse(body, line_offset, structure) do
       {:ok, document} ->
         case validate_source_identity(entry, frontmatter, document) do
           :ok ->

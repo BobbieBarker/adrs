@@ -11,7 +11,8 @@ defmodule AdrDist.CorpusTest do
     "elixir-ecto" => %{adrs: 1, rules: 1, examples: 2, supporting: 0},
     "elixir-macro-anti-patterns" => %{adrs: 5, rules: 7, examples: 14, supporting: 0},
     "elixir-otp" => %{adrs: 13, rules: 46, examples: 92, supporting: 2},
-    "elixir-resilience" => %{adrs: 1, rules: 2, examples: 4, supporting: 0}
+    "elixir-resilience" => %{adrs: 1, rules: 2, examples: 4, supporting: 0},
+    "software-design" => %{adrs: 1, rules: 0, examples: 0, supporting: 1}
   }
 
   test "the complete corpus has stable counts, relationships, and content invariants" do
@@ -33,8 +34,8 @@ defmodule AdrDist.CorpusTest do
       frequencies = Enum.frequencies_by(records, & &1["record_kind"])
 
       assert frequencies["adr_summary"] == expected.adrs
-      assert frequencies["rule"] == expected.rules
-      assert frequencies["example"] == expected.examples
+      assert Map.get(frequencies, "rule", 0) == expected.rules
+      assert Map.get(frequencies, "example", 0) == expected.examples
       assert Map.get(frequencies, "supporting", 0) == expected.supporting
 
       legacy = TestSupport.jsonl!(Path.join([output_root, domain, "adrs.jsonl"]))
@@ -62,11 +63,11 @@ defmodule AdrDist.CorpusTest do
     end)
 
     records = records_by_domain |> Map.values() |> List.flatten()
-    assert length(records) == 401
-    assert count_kind(records, "adr_summary") == 45
+    assert length(records) == 403
+    assert count_kind(records, "adr_summary") == 46
     assert count_kind(records, "rule") == 118
     assert count_kind(records, "example") == 236
-    assert count_kind(records, "supporting") == 2
+    assert count_kind(records, "supporting") == 3
 
     summaries = Enum.filter(records, &(&1["record_kind"] == "adr_summary"))
     assert Enum.count(summaries, &(&1["decision"] == "")) == 30
@@ -149,7 +150,8 @@ defmodule AdrDist.CorpusTest do
              & &1["record_id"]
            ) == [
              "elixir-otp:adr-001:supporting:when-a-genserver-is-the-right-answer",
-             "elixir-otp:adr-003:supporting:decision-test"
+             "elixir-otp:adr-003:supporting:decision-test",
+             "software-design:adr-001:supporting:decision"
            ]
 
     refute Enum.any?(records, fn record ->

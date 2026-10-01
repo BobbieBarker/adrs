@@ -34,7 +34,8 @@ defmodule AdrDist.PackageValidator do
     "elixir-ecto" => %{adrs: 1, rules: 1, examples: 2, supporting: 0},
     "elixir-macro-anti-patterns" => %{adrs: 5, rules: 7, examples: 14, supporting: 0},
     "elixir-otp" => %{adrs: 13, rules: 46, examples: 92, supporting: 2},
-    "elixir-resilience" => %{adrs: 1, rules: 2, examples: 4, supporting: 0}
+    "elixir-resilience" => %{adrs: 1, rules: 2, examples: 4, supporting: 0},
+    "software-design" => %{adrs: 1, rules: 0, examples: 0, supporting: 1}
   }
 
   @type stats :: %{
@@ -213,13 +214,13 @@ defmodule AdrDist.PackageValidator do
 
     (per_domain_errors ++
        [])
-    |> total_count_error("all domains", "adr_summary", totals, 45)
+    |> total_count_error("all domains", "adr_summary", totals, 46)
     |> total_count_error("all domains", "rule", totals, 118)
     |> total_count_error("all domains", "example", totals, 236)
-    |> total_count_error("all domains", "supporting", totals, 2)
+    |> total_count_error("all domains", "supporting", totals, 3)
     |> add_if(
-      length(records) != 401,
-      "dist/: expected 401 retrieval rows, found #{length(records)}"
+      length(records) != 403,
+      "dist/: expected 403 retrieval rows, found #{length(records)}"
     )
   end
 
@@ -611,16 +612,16 @@ defmodule AdrDist.PackageValidator do
     (duplicate_errors(query_ids, "evaluation query_id") ++
        [])
     |> add_if(
-      length(clean_rows) != 418,
-      "eval/: expected 418 queries, found #{length(clean_rows)}"
+      length(clean_rows) != 422,
+      "eval/: expected 422 queries, found #{length(clean_rows)}"
     )
-    |> evaluation_class_count_error(class_counts, "exact", 118)
-    |> evaluation_class_count_error(class_counts, "scenario", 118)
-    |> evaluation_class_count_error(class_counts, "code", 118)
+    |> evaluation_class_count_error(class_counts, "exact", 119)
+    |> evaluation_class_count_error(class_counts, "scenario", 119)
+    |> evaluation_class_count_error(class_counts, "code", 119)
     |> evaluation_class_count_error(class_counts, "hard_negative", 24)
     |> evaluation_class_count_error(class_counts, "multi_rule", 15)
     |> evaluation_class_count_error(class_counts, "no_answer", 15)
-    |> evaluation_class_count_error(class_counts, "citation", 10)
+    |> evaluation_class_count_error(class_counts, "citation", 11)
     |> Kernel.++(Enum.flat_map(rows, &validate_query(&1, record_ids)))
     |> Kernel.++(validate_rule_query_coverage(rule_ids, MapSet.new(query_ids)))
     |> Kernel.++(validate_bidirectional_hard_negatives(clean_rows))

@@ -1,10 +1,10 @@
 {
   "counts": {
-    "adrs": 45,
+    "adrs": 46,
     "examples": 236,
-    "records": 401,
+    "records": 403,
     "rules": 118,
-    "supporting": 2
+    "supporting": 3
   },
   "domains": [
     {
@@ -104,6 +104,20 @@
       "domain": "elixir-resilience",
       "sha256": "3f83569e84f64604a5933eb9ae826d67ba5b5db52cf350e6ec56c6e608c311b3",
       "title": "Elixir Resilience / External Services"
+    },
+    {
+      "artifact": "software-design/retrieval.jsonl",
+      "counts": {
+        "adrs": 1,
+        "examples": 0,
+        "records": 2,
+        "rules": 0,
+        "supporting": 1
+      },
+      "description": "Language-agnostic decisions about module responsibilities, information hiding, cohesion, coupling, and interface costs.",
+      "domain": "software-design",
+      "sha256": "c693b3debd23919f4270fc01cd421df3d7c6ffe813b49a011c378e965ee63c31",
+      "title": "Software Design"
     }
   ],
   "schema_version": "retrieval-v1"

@@ -1,6 +1,6 @@
 # adrs
 
-Architecture Decision Records, packaged as agent context. Each ADR contains independently citable Rules with Wrong examples, Correct examples, and Why paragraphs that name the mechanism behind the difference. Written for engineers and shaped for LLMs to consume: the format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the rules load automatically when you write or review code.
+Architecture Decision Records, packaged as agent context. ADRs contain independently citable Rules with Correct/Wrong/Why examples, or a complete narrative decision whose sections need to be read together. Written for engineers and shaped for LLMs to consume: the format reads cleanly as a reference and drops into Cursor, Claude Code, Aider, and custom retrieval-based agents so the guidance loads automatically when you write or review code.
 
 The rules are grouped into domains. Each domain is a self-contained set with its own pre-rendered bundles under `dist/<domain>/`; adopt one or several.
 
@@ -8,6 +8,7 @@ The rules are grouped into domains. Each domain is a self-contained set with its
 
 | Domain | Covers | ADRs |
 |---|---|---|
+| [`software-design`](adrs/software-design) | Language-agnostic module boundaries, information hiding, cohesion, coupling, and interface costs | 1 |
 | [`elixir-otp`](adrs/elixir-otp) | OTP, GenServer, supervision, BEAM scheduling, interprocess data, message routing, stateful-process testing | 13 |
 | [`elixir-conventions`](adrs/elixir-conventions) | Structural dispatch, runtime algorithm selection, pipeline composition, structs, validation-primitive selection, `with` chains, streaming, effect compensation, structured errors | 9 |
 | [`elixir-ecto`](adrs/elixir-ecto) | Transaction boundaries and the commit contract | 1 |
@@ -15,6 +16,16 @@ The rules are grouped into domains. Each domain is a self-contained set with its
 | [`elixir-code-anti-patterns`](adrs/elixir-code-anti-patterns) | The official Elixir code anti-patterns | 10 |
 | [`elixir-design-anti-patterns`](adrs/elixir-design-anti-patterns) | The official Elixir design anti-patterns | 6 |
 | [`elixir-macro-anti-patterns`](adrs/elixir-macro-anti-patterns) | The official Elixir meta-programming anti-patterns | 5 |
+
+### software-design
+
+How to organize responsibilities so a change can remain local: identify the
+knowledge a module owns, preserve its invariants, and compare the benefit of a
+boundary with the understanding and coordination its interface requires. The
+decision applies across languages and includes cases where keeping related code
+together produces the better design.
+
+- [ADR-001: Design Modules for Information Hiding, High Cohesion, and Low Coupling](adrs/software-design/adr-001-design-modules-for-information-hiding-high-cohesion-and-low-coupling.md)
 
 ### elixir-otp
 
@@ -168,6 +179,16 @@ New retrievers should consume `dist/<domain>/retrieval.jsonl`. It is a model-neu
 - `supporting` preserves useful Decision subsections that are not numbered Rules.
 
 The v1 Rule authoring grammar has exactly one `Correct`, one `Wrong`, and one `Why` region, in that order. A Correct or Wrong region may contain multiple fenced snippets, prose between those fences, and deeper Markdown headings; those pieces remain one example region. Repeating a Correct, Wrong, or Why label is rejected, and the generated Correct and Wrong record IDs therefore end in the per-polarity index `:01`.
+
+A registry entry can explicitly declare `structure: narrative` when the decision's
+sections need to travel together. The default remains `structure: rules` with
+the grammar above. A narrative ADR produces an `adr_summary` and one `supporting`
+record, `<domain>:adr-NNN:supporting:decision`, containing the complete Decision
+through any review criteria before Consequences. Its examples remain inside that
+record; they are not assigned standalone Correct or Wrong polarity. The supporting
+record hydrates to itself and links to its ADR summary for Context. Narrative mode
+rejects numbered Rule headings and Correct/Wrong/Why labels to prevent accidental
+mixing of the two structures. Both modes use the existing retrieval-v1 schema.
 
 The v1 contract is published as `schema/retrieval-v1.schema.json`, and `dist/retrieval-catalog.json` inventories every domain artifact with counts and SHA-256 checksums. Stable semantic `record_id` values support deterministic lookup for explicit citations such as `elixir-otp` ADR-005 Rule 2; content hashes report change, but are never identifiers. Future incompatible retrieval changes require a new schema and artifact name or an explicit migration; they must not silently redefine `retrieval-v1` semantics.
 
